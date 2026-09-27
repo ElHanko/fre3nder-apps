@@ -8,10 +8,11 @@ publishes them.
 
 ## Current scope
 
-The initial repository contains:
+The repository contains:
 
 - a deterministic `.fre3app` builder;
 - a minimal `dummy` package used to qualify the format and lifecycle contract;
+- the pinned Fluidd 1.37.6 web frontend recipe;
 - host-side tests for reproducibility and package signatures.
 
 No App Store is required. A `.fre3app` artifact can be installed directly by
@@ -26,6 +27,29 @@ scripts/build-fre3app   apps/dummy   --key <fre3nder-root>/local/production/keys
 ```
 
 The output is written to `dist/` by default.
+
+## Fluidd
+
+Fluidd is a static web frontend with no daemon. Its entire web payload is
+included in the signed `.fre3app`; the printer never downloads Fluidd and
+Moonraker does not update its files. On the build host, prepare the pinned
+upstream release before running the normal builder:
+
+```sh
+scripts/prepare-fluidd
+scripts/build-fre3app apps/fluidd --key <signing-key>
+```
+
+`prepare-fluidd` downloads the exact v1.37.6 asset listed in
+`apps/fluidd/upstream.json`, checks its size and SHA-256, safely extracts it
+into ignored `apps/fluidd/payload/`, and validates `index.html` and
+`release_info.json`. `--archive <file>` uses a previously downloaded archive
+with the same checks. The builder signs every payload file in `SHA256SUMS`.
+
+Fluidd's source commit, archive identity and GPL-3.0-only redistribution
+information are recorded in `apps/fluidd/upstream.json` and
+`apps/fluidd/licenses/UPSTREAM`. The package carries the GPL version 3 text in
+`apps/fluidd/licenses/LICENSE.fluidd`.
 
 ## Trust
 

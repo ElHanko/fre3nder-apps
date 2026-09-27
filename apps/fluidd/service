@@ -1,0 +1,37 @@
+#!/bin/sh
+exec /usr/bin/python3 - "$@" <<'PY'
+import json
+import os
+from pathlib import Path
+import sys
+
+
+def healthy():
+    payload = Path(os.environ["FRE3NDER_APP_RUNTIME_DIR"]) / "payload"
+    index = payload / "index.html"
+    info = payload / "release_info.json"
+    if index.is_symlink() or not index.is_file() or not index.stat().st_size:
+        return False
+    if info.is_symlink() or not info.is_file():
+        return False
+    data = json.loads(info.read_text())
+    return (isinstance(data, dict)
+            and data.get("project_name") == "fluidd"
+            and data.get("project_owner") == "fluidd-core"
+            and data.get("version") == "v1.37.6")
+
+
+action = sys.argv[1] if len(sys.argv) == 2 else ""
+if action in ("install", "update", "restore", "start", "status"):
+    try:
+        if healthy():
+            sys.exit(0)
+    except (OSError, ValueError, TypeError, KeyError):
+        pass
+    print("fluidd: signed web payload is invalid", file=sys.stderr)
+    sys.exit(1)
+if action in ("stop", "uninstall"):
+    sys.exit(0)
+print("usage: service {install|update|restore|start|stop|status|uninstall}", file=sys.stderr)
+sys.exit(2)
+PY

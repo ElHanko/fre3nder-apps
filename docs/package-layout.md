@@ -34,3 +34,9 @@ SHA256SUMS.sig
 The archive is a ZIP container using stored members, fixed timestamps, fixed
 modes, and sorted member order so identical inputs and the same signing key
 produce byte-identical output.
+
+An optional `[web] frontend = true` declares a static web frontend. Such a
+package must contain a nonempty `payload/index.html`; the platform serves its
+signed payload at `/opt/fre3nder/apps-v2/<app>/payload`. A missing `[web]`
+section means the package is not a web frontend. The platform owns frontend
+selection and Lighttpd refresh, while the app service remains unprivileged.

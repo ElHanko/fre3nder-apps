@@ -1,4 +1,5 @@
 /dist/
 /local/
+/apps/fluidd/payload/
 __pycache__/
 *.py[cod]

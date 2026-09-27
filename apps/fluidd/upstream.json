@@ -1,0 +1,10 @@
+{
+  "project": "fluidd-core/fluidd",
+  "version": "v1.37.6",
+  "source_commit": "d894c50d580212c245a7c552ae695008c441683b",
+  "asset_url": "https://github.com/fluidd-core/fluidd/releases/download/v1.37.6/fluidd.zip",
+  "asset_size": 4359674,
+  "asset_sha256": "9fe5bcd4a443f4cccd20cef222e70cc334a874070b21d116097a28405b0ed456",
+  "license": "GPL-3.0-only",
+  "license_source": "https://github.com/fluidd-core/fluidd/blob/d894c50d580212c245a7c552ae695008c441683b/LICENSE"
+}

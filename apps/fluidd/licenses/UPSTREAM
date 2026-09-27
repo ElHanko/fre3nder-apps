@@ -1,0 +1,11 @@
+Fluidd 1.37.6 is sourced from fluidd-core/fluidd, tag v1.37.6,
+commit d894c50d580212c245a7c552ae695008c441683b.
+Release asset: https://github.com/fluidd-core/fluidd/releases/download/v1.37.6/fluidd.zip
+Expected bytes: 4359674
+SHA-256: 9fe5bcd4a443f4cccd20cef222e70cc334a874070b21d116097a28405b0ed456
+
+Upstream declares GNU GPL version 3 in its LICENSE file:
+https://github.com/fluidd-core/fluidd/blob/d894c50d580212c245a7c552ae695008c441683b/LICENSE
+LICENSE.fluidd contains the GNU GPL version 3 license text. The Fluidd
+release payload is bundled only when the pinned archive passes size, hash,
+archive-safety, and identity checks during host preparation.

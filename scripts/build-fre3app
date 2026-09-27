@@ -128,6 +128,10 @@ def render_manifest(source: pathlib.Path, fingerprint: str) -> bytes:
     ):
         fail("manifest runtime contract is unsupported")
 
+    web = manifest.get("web", {})
+    if not isinstance(web, dict) or type(web.get("frontend", False)) is not bool:
+        fail("manifest web capability is invalid")
+
     if signature != {
         "algorithm": "Ed25519",
         "file": "SHA256SUMS.sig",
@@ -181,6 +185,9 @@ def build(source: pathlib.Path, private_key: pathlib.Path, output: pathlib.Path 
 
     if "service" not in files:
         fail("package service is missing")
+
+    if manifest.get("web", {}).get("frontend", False) and not files.get("payload/index.html"):
+        fail("web frontend requires a nonempty payload/index.html")
 
     checksums = "".join(
         f"{hashlib.sha256(files[name]).hexdigest()}  {name}\n"

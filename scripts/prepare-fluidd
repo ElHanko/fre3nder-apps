@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+"""Prepare the pinned Fluidd release as signed-package source on the host."""
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import stat
+import sys
+import tempfile
+import urllib.request
+import zipfile
+
+
+SOURCE = Path(__file__).resolve().parents[1] / "apps/fluidd"
+MAX_UNPACKED = 1024 * 1024 * 1024
+
+
+def verify_archive(path, upstream):
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("Fluidd archive must be a regular file")
+    if path.stat().st_size != upstream["asset_size"]:
+        raise ValueError("Fluidd archive size mismatch")
+    digest = hashlib.sha256()
+    with path.open("rb") as archive:
+        for chunk in iter(lambda: archive.read(1024 * 1024), b""):
+            digest.update(chunk)
+    if digest.hexdigest() != upstream["asset_sha256"]:
+        raise ValueError("Fluidd archive SHA-256 mismatch")
+
+
+def download(path, upstream):
+    request = urllib.request.Request(upstream["asset_url"])
+    size = 0
+    with urllib.request.urlopen(request, timeout=60) as response, path.open("xb") as output:
+        if not response.geturl().startswith("https://"):
+            raise ValueError("Fluidd download left HTTPS")
+        for chunk in iter(lambda: response.read(1024 * 1024), b""):
+            size += len(chunk)
+            if size > upstream["asset_size"]:
+                raise ValueError("Fluidd download exceeds pinned size")
+            output.write(chunk)
+    if size != upstream["asset_size"]:
+        raise ValueError("Fluidd download size mismatch")
+
+
+def extract(archive_path, destination):
+    seen = set()
+    total = 0
+    with zipfile.ZipFile(archive_path) as archive:
+        for member in archive.infolist():
+            name = member.filename
+            logical = name[:-1] if member.is_dir() else name
+            parts = logical.split("/")
+            mode = stat.S_IFMT(member.external_attr >> 16)
+            if (not logical or name.startswith("/") or "\\" in name
+                    or any(ord(char) < 32 or ord(char) == 127 for char in name)
+                    or any(part in ("", ".", "..") for part in parts)
+                    or logical in seen
+                    or mode not in (0, stat.S_IFREG, stat.S_IFDIR)):
+                raise ValueError(f"unsafe Fluidd ZIP member: {name!r}")
+            seen.add(logical)
+            total += member.file_size
+            if total > MAX_UNPACKED:
+                raise ValueError("Fluidd ZIP exceeds unpacked size limit")
+            target = destination.joinpath(*parts)
+            if member.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(member) as source, target.open("xb") as output:
+                    shutil.copyfileobj(source, output)
+
+
+def validate_payload(payload, upstream):
+    index = payload / "index.html"
+    info = payload / "release_info.json"
+    if not index.is_file() or not index.stat().st_size or not info.is_file():
+        raise ValueError("Fluidd payload lacks index.html or release_info.json")
+    data = json.loads(info.read_text())
+    if (not isinstance(data, dict) or data.get("project_name") != "fluidd"
+            or data.get("project_owner") != "fluidd-core"
+            or data.get("version") != upstream["version"]):
+        raise ValueError("Fluidd release_info.json identity or version mismatch")
+
+
+def prepare(archive_path, destination, upstream):
+    verify_archive(archive_path, upstream)
+    if destination.is_symlink():
+        raise ValueError("Fluidd payload destination must not be a symlink")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=destination.parent, prefix=".fluidd-") as tmp:
+        temporary = Path(tmp)
+        staged = temporary / "payload"
+        staged.mkdir()
+        extract(archive_path, staged)
+        validate_payload(staged, upstream)
+        previous = temporary / "previous"
+        if destination.exists():
+            os.replace(destination, previous)
+        try:
+            os.replace(staged, destination)
+        except OSError:
+            if previous.exists():
+                os.replace(previous, destination)
+            raise
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--archive", type=Path, help="use an already downloaded archive")
+    args = parser.parse_args()
+    upstream = json.loads((SOURCE / "upstream.json").read_text())
+    if args.archive is not None:
+        prepare(args.archive, SOURCE / "payload", upstream)
+        return
+    with tempfile.TemporaryDirectory(prefix="fre3nder-fluidd-") as tmp:
+        archive = Path(tmp) / "fluidd.zip"
+        download(archive, upstream)
+        prepare(archive, SOURCE / "payload", upstream)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, zipfile.BadZipFile, json.JSONDecodeError) as exc:
+        print(f"prepare-fluidd: {exc}", file=sys.stderr)
+        sys.exit(1)

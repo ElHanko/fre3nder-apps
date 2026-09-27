@@ -1,0 +1,26 @@
+format = 1
+
+[app]
+name = "fluidd"
+version = "1.37.6-fre3nder.1"
+release_serial = 1
+
+[publisher]
+id = "fre3nder-official"
+key_fingerprint = "@PUBLISHER_FINGERPRINT@"
+
+[target]
+platform = "fre3nder-x2000"
+arch = "mipsel"
+
+[runtime]
+service = "service"
+autostart = false
+
+[web]
+frontend = true
+
+[signature]
+algorithm = "Ed25519"
+file = "SHA256SUMS.sig"
+signed_file = "SHA256SUMS"
