@@ -1,0 +1,239 @@
+#!/usr/bin/env python3
+"""Build a deterministic signed Fre3nder application package."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import os
+import pathlib
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+import tomllib
+import zipfile
+
+
+FINGERPRINT_TOKEN = "@PUBLISHER_FINGERPRINT@"
+FIXED_TIME = (1980, 1, 1, 0, 0, 0)
+APP_RE = re.compile(r"[a-z][a-z0-9_-]{0,63}")
+PUBLISHER_RE = re.compile(r"[a-z][a-z0-9_.-]{0,63}")
+SHA256_RE = re.compile(r"[0-9a-f]{64}")
+
+
+def fail(message: str) -> "None":
+    raise ValueError(message)
+
+
+def regular_file(path: pathlib.Path, label: str) -> None:
+    try:
+        st = path.lstat()
+    except FileNotFoundError as exc:
+        raise ValueError(f"{label} is missing: {path}") from exc
+    if path.is_symlink() or not stat.S_ISREG(st.st_mode):
+        fail(f"{label} must be a regular non-symlink file: {path}")
+
+
+def openssl(*args: str, input_data: bytes | None = None) -> bytes:
+    result = subprocess.run(
+        ["openssl", *args],
+        input=input_data,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", "replace").strip()
+        fail(f"openssl failed: {detail or 'unknown error'}")
+    return result.stdout
+
+
+def publisher_fingerprint(private_key: pathlib.Path) -> str:
+    regular_file(private_key, "signing private key")
+    public_pem = openssl("pkey", "-in", str(private_key), "-pubout")
+    text = openssl("pkey", "-pubin", "-text", "-noout", input_data=public_pem)
+    if not text.decode("utf-8", "replace").startswith("ED25519 Public-Key:"):
+        fail("signing key is not Ed25519")
+    der = openssl("pkey", "-pubin", "-outform", "DER", input_data=public_pem)
+    return hashlib.sha256(der).hexdigest()
+
+
+def source_members(source: pathlib.Path) -> list[tuple[str, pathlib.Path]]:
+    members: list[tuple[str, pathlib.Path]] = []
+    for path in sorted(source.rglob("*")):
+        rel = path.relative_to(source).as_posix()
+        if path.is_symlink():
+            fail(f"symlinks are not allowed in package sources: {rel}")
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            fail(f"unsupported package source member: {rel}")
+        if rel in {
+            "manifest.toml",
+            "SHA256SUMS",
+            "SHA256SUMS.sig",
+        }:
+            fail(f"generated member must not exist in source: {rel}")
+        if rel == "manifest.toml.in":
+            continue
+        if "\\" in rel or any(part in ("", ".", "..") for part in rel.split("/")):
+            fail(f"unsafe package source member: {rel}")
+        members.append((rel, path))
+    return members
+
+
+def render_manifest(source: pathlib.Path, fingerprint: str) -> bytes:
+    template = source / "manifest.toml.in"
+    regular_file(template, "manifest template")
+    text = template.read_text(encoding="utf-8")
+    if text.count(FINGERPRINT_TOKEN) != 1:
+        fail("manifest template must contain publisher fingerprint token exactly once")
+    rendered = text.replace(FINGERPRINT_TOKEN, fingerprint)
+    data = rendered.encode("utf-8")
+    manifest = tomllib.loads(rendered)
+
+    if manifest.get("format") != 1:
+        fail("manifest format must be 1")
+
+    app = manifest.get("app")
+    publisher = manifest.get("publisher")
+    target = manifest.get("target")
+    runtime = manifest.get("runtime")
+    signature = manifest.get("signature")
+
+    if not isinstance(app, dict) or not APP_RE.fullmatch(str(app.get("name", ""))):
+        fail("manifest app name is invalid")
+    if not isinstance(app.get("version"), str) or not app["version"]:
+        fail("manifest app version is invalid")
+    if type(app.get("release_serial")) is not int or app["release_serial"] < 1:
+        fail("manifest release_serial is invalid")
+
+    if (
+        not isinstance(publisher, dict)
+        or not PUBLISHER_RE.fullmatch(str(publisher.get("id", "")))
+        or publisher.get("key_fingerprint") != fingerprint
+        or not SHA256_RE.fullmatch(fingerprint)
+    ):
+        fail("manifest publisher metadata is invalid")
+
+    if target != {"platform": "fre3nder-x2000", "arch": "mipsel"}:
+        fail("manifest target is unsupported")
+
+    if (
+        not isinstance(runtime, dict)
+        or runtime.get("service") != "service"
+        or type(runtime.get("autostart", True)) is not bool
+    ):
+        fail("manifest runtime contract is unsupported")
+
+    if signature != {
+        "algorithm": "Ed25519",
+        "file": "SHA256SUMS.sig",
+        "signed_file": "SHA256SUMS",
+    }:
+        fail("manifest signature contract is unsupported")
+
+    return data
+
+
+def zip_info(name: str, mode: int) -> zipfile.ZipInfo:
+    info = zipfile.ZipInfo(name, FIXED_TIME)
+    info.create_system = 3
+    info.compress_type = zipfile.ZIP_STORED
+    info.external_attr = (stat.S_IFREG | mode) << 16
+    info.flag_bits = 0
+    return info
+
+
+def write_zip(output: pathlib.Path, files: dict[str, bytes]) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(
+        dir=output.parent,
+        prefix=f".{output.name}.",
+    )
+    os.close(fd)
+    temp = pathlib.Path(temp_name)
+    try:
+        with zipfile.ZipFile(temp, "w", allowZip64=True) as archive:
+            for name in sorted(files):
+                mode = 0o755 if name == "service" else 0o644
+                archive.writestr(zip_info(name, mode), files[name])
+        os.replace(temp, output)
+    finally:
+        if temp.exists():
+            temp.unlink()
+
+
+def build(source: pathlib.Path, private_key: pathlib.Path, output: pathlib.Path | None) -> pathlib.Path:
+    source = source.resolve()
+    if not source.is_dir():
+        fail(f"package source directory is missing: {source}")
+
+    fingerprint = publisher_fingerprint(private_key)
+    manifest_data = render_manifest(source, fingerprint)
+    manifest = tomllib.loads(manifest_data.decode("utf-8"))
+
+    files: dict[str, bytes] = {"manifest.toml": manifest_data}
+    for name, path in source_members(source):
+        files[name] = path.read_bytes()
+
+    if "service" not in files:
+        fail("package service is missing")
+
+    checksums = "".join(
+        f"{hashlib.sha256(files[name]).hexdigest()}  {name}\n"
+        for name in sorted(files)
+    ).encode("ascii")
+    files["SHA256SUMS"] = checksums
+
+    with tempfile.TemporaryDirectory(prefix="fre3app-sign-") as tmp:
+        sums = pathlib.Path(tmp) / "SHA256SUMS"
+        sig = pathlib.Path(tmp) / "SHA256SUMS.sig"
+        sums.write_bytes(checksums)
+        openssl(
+            "pkeyutl",
+            "-sign",
+            "-rawin",
+            "-inkey",
+            str(private_key),
+            "-in",
+            str(sums),
+            "-out",
+            str(sig),
+        )
+        signature = sig.read_bytes()
+
+    if len(signature) != 64:
+        fail("Ed25519 signature has unexpected size")
+    files["SHA256SUMS.sig"] = signature
+
+    if output is None:
+        name = manifest["app"]["name"]
+        version = manifest["app"]["version"]
+        output = pathlib.Path("dist") / f"{name}-{version}-x2000.fre3app"
+
+    write_zip(output, files)
+    return output
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("source", type=pathlib.Path)
+    parser.add_argument("--key", required=True, type=pathlib.Path)
+    parser.add_argument("--output", type=pathlib.Path)
+    args = parser.parse_args()
+
+    try:
+        output = build(args.source, args.key, args.output)
+    except (OSError, ValueError, tomllib.TOMLDecodeError) as exc:
+        print(f"build-fre3app: {exc}", file=sys.stderr)
+        return 1
+
+    print(output)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

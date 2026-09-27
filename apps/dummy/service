@@ -1,0 +1,22 @@
+#!/bin/sh
+
+state=${FRE3NDER_APP_DATA_DIR:?}/running
+
+case "${1:-}" in
+install|update|restore)
+    exit 0
+    ;;
+start)
+    : > "$state"
+    ;;
+stop|uninstall)
+    rm -f -- "$state"
+    ;;
+status)
+    [ -f "$state" ]
+    ;;
+*)
+    echo "usage: $0 {install|update|restore|start|stop|status|uninstall}" >&2
+    exit 2
+    ;;
+esac
