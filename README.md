@@ -24,7 +24,8 @@ file on a compatible Fre3nder system.
 The builder never creates signing keys. Supply an existing Ed25519 private key:
 
 ```sh
-scripts/build-fre3app   apps/dummy   --key <fre3nder-root>/local/production/keys/apps/private.pem
+scripts/build-fre3app apps/dummy \
+  --key <fre3nder-root>/local/production/keys/apps/private.pem
 ```
 
 The output is written to `dist/` by default.
@@ -58,19 +59,68 @@ OctoApp is packaged as an isolated autostart application. Fre3nder does not run
 OctoApp's upstream installer and does not add OctoApp-specific Python packages
 to the RootFS.
 
-First resolve the pure-Python dependency set into a reviewed lock file:
+For the normal build, use the OctoApp build wrapper:
+
+```sh
+scripts/build-octoapp
+```
+
+By default it uses the sibling `../fre3nder` checkout for:
+
+- the Fre3nder X2000 Buildroot output;
+- the official app signing key.
+
+The paths can be overridden explicitly when required:
+
+```sh
+scripts/build-octoapp \
+  --buildroot-output <buildroot-output> \
+  --key <signing-key>
+```
+
+The normal build reuses the already prepared native pycryptodomex bundle and
+the reviewed pure-Python dependency lock.
+
+To rebuild the native pycryptodomex dependency before packaging:
+
+```sh
+scripts/build-octoapp --refresh-native
+```
+
+To deliberately regenerate the pure-Python dependency lock:
+
+```sh
+scripts/build-octoapp --refresh-lock
+```
+
+Both refresh operations can be requested together:
+
+```sh
+scripts/build-octoapp --refresh-native --refresh-lock
+```
+
+A custom output path can be supplied with:
+
+```sh
+scripts/build-octoapp --output <package.fre3app>
+```
+
+The wrapper orchestrates the existing OctoApp build tools. It does not
+automatically change the pinned upstream version, upstream commit,
+`release_serial`, or package version. Those changes remain explicit review
+steps.
+
+The individual tools remain available for development and debugging:
 
 ```sh
 scripts/lock-octoapp
-```
 
-Then prepare the payload using an existing Fre3nder X2000 Buildroot output:
-
-```sh
 scripts/build-octoapp-native \
   --buildroot-output <fre3nder-root>/local/production/work/x2000/buildroot-output-fre3nder
+
 scripts/prepare-octoapp \
   --buildroot-output <fre3nder-root>/local/production/work/x2000/buildroot-output-fre3nder
+
 scripts/build-fre3app apps/octoapp --key <signing-key>
 ```
 
