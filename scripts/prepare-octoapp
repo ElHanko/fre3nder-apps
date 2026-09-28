@@ -1,0 +1,679 @@
+#!/usr/bin/env python3
+"""Prepare the pinned OctoApp runtime as Fre3nder package payload."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import urllib.parse
+import urllib.request
+import zipfile
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE = ROOT / "apps/octoapp"
+UPSTREAM_FILE = SOURCE / "upstream.json"
+LOCK_FILE = SOURCE / "python-wheels.json"
+REQUIREMENTS_FILE = SOURCE / "requirements.in"
+PATCH = SOURCE / "patches/0001-fre3nder-disable-system-config.patch"
+PYTHON_MINOR = "3.12"
+
+
+def fail(message: str) -> "None":
+    raise ValueError(message)
+
+
+def run(command, *, cwd=None) -> None:
+    result = subprocess.run(
+        [str(value) for value in command],
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        check=False,
+    )
+    if result.returncode != 0:
+        fail(f"command failed ({result.returncode}): {' '.join(map(str, command))}")
+
+
+def load_json(path: Path) -> dict:
+    if path.is_symlink() or not path.is_file():
+        fail(f"required file is missing or unsafe: {path}")
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        fail(f"JSON document must be an object: {path}")
+    return value
+
+
+def normalized_requirements() -> list[str]:
+    return [
+        line.strip()
+        for line in REQUIREMENTS_FILE.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
+def validate_inputs(upstream: dict, lock: dict) -> None:
+    if upstream.get("schema") != 1:
+        fail("unsupported OctoApp upstream manifest schema")
+    if upstream.get("version") != "3.2.4":
+        fail("unexpected OctoApp version")
+    commit = upstream.get("commit")
+    if (
+        not isinstance(commit, str)
+        or len(commit) != 40
+        or any(char not in "0123456789abcdef" for char in commit)
+    ):
+        fail("invalid OctoApp upstream commit")
+
+    if lock.get("schema") != 1:
+        fail("unsupported OctoApp wheel lock schema")
+    if lock.get("target") != {
+        "python": PYTHON_MINOR,
+        "platform": "any",
+        "implementation": "py",
+        "abi": "none",
+    }:
+        fail("OctoApp wheel lock targets a different Python runtime")
+    if lock.get("requirements") != normalized_requirements():
+        fail("OctoApp wheel lock does not match requirements.in")
+
+    wheels = lock.get("wheels")
+    if not isinstance(wheels, list) or not wheels:
+        fail("OctoApp wheel lock is empty")
+    seen_names = set()
+    seen_files = set()
+    for wheel in wheels:
+        if not isinstance(wheel, dict):
+            fail("invalid OctoApp wheel lock entry")
+        for field in ("name", "version", "filename", "sha256"):
+            if not isinstance(wheel.get(field), str) or not wheel[field]:
+                fail(f"OctoApp wheel lock entry lacks {field}")
+        digest = wheel["sha256"]
+        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            fail(f"invalid wheel SHA-256: {wheel['filename']}")
+        if not wheel["filename"].endswith(".whl"):
+            fail(f"invalid wheel filename: {wheel['filename']}")
+        normalized = wheel["name"].lower().replace("_", "-")
+        if normalized in seen_names or wheel["filename"] in seen_files:
+            fail("duplicate OctoApp wheel lock entry")
+        seen_names.add(normalized)
+        seen_files.add(wheel["filename"])
+
+
+def source_checkout(destination: Path, upstream: dict, source: Path | None) -> Path:
+    commit = upstream["commit"]
+    if source is None:
+        checkout = destination / "upstream"
+        run(["git", "init", "-q", checkout])
+        run(["git", "-C", checkout, "remote", "add", "origin", upstream["repository"]])
+        run(["git", "-C", checkout, "fetch", "-q", "--depth=1", "origin", commit])
+        run(["git", "-C", checkout, "checkout", "-q", "--detach", "FETCH_HEAD"])
+    else:
+        source = source.resolve()
+        if not (source / ".git").exists():
+            fail("OctoApp --source must be a Git checkout")
+        actual = subprocess.check_output(
+            ["git", "-C", str(source), "rev-parse", "HEAD"],
+            text=True,
+        ).strip()
+        if actual != commit:
+            fail(f"OctoApp source commit mismatch: {actual} != {commit}")
+        checkout = destination / "upstream"
+        shutil.copytree(
+            source,
+            checkout,
+            symlinks=False,
+            ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc", "*.pyo"),
+        )
+    return checkout
+
+
+def apply_fre3nder_patch(checkout: Path) -> None:
+    if PATCH.is_symlink() or not PATCH.is_file():
+        fail("Fre3nder OctoApp patch is missing")
+    run(["git", "apply", "--check", str(PATCH)], cwd=checkout)
+    run(["git", "apply", str(PATCH)], cwd=checkout)
+
+
+def verify_upstream_source(checkout: Path, upstream: dict) -> None:
+    pyproject = checkout / "pyproject.toml"
+    license_file = checkout / "LICENSE"
+    for path in (
+        pyproject,
+        license_file,
+        checkout / "octoapp",
+        checkout / "moonraker_octoapp",
+        checkout / "linux_host",
+    ):
+        if path.is_symlink() or not path.exists():
+            fail(f"OctoApp source member is missing or unsafe: {path.name}")
+    text = pyproject.read_text(encoding="utf-8")
+    if f'version = "{upstream["version"]}"' not in text:
+        fail("OctoApp pyproject version does not match upstream manifest")
+    patched = (checkout / "moonraker_octoapp/moonrakerhost.py").read_text(
+        encoding="utf-8"
+    )
+    for forbidden in (
+        "SystemConfigManager",
+        "EnsureUpdateManagerFilesSetup",
+        "EnsureAllowedServicesFile",
+        "OCTOAPP_DISABLE_SYSTEM_CONFIG",
+    ):
+        if forbidden in patched:
+            fail(f"Fre3nder OctoApp system-config path remains: {forbidden}")
+
+    client = (checkout / "moonraker_octoapp/moonrakerclient.py").read_text(
+        encoding="utf-8"
+    )
+    if "./install.sh" in client:
+        fail("Fre3nder OctoApp still references the upstream installer")
+
+
+def verify_wheel(path: Path, expected: dict) -> None:
+    if path.is_symlink() or not path.is_file():
+        fail(f"wheel is missing or unsafe: {path.name}")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != expected["sha256"]:
+        fail(f"wheel SHA-256 mismatch: {path.name}")
+
+
+def download_json(url: str) -> dict:
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "fre3nder-apps/prepare-octoapp"},
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        if not response.geturl().startswith("https://"):
+            fail("PyPI metadata request left HTTPS")
+        data = response.read(8 * 1024 * 1024 + 1)
+    if len(data) > 8 * 1024 * 1024:
+        fail("PyPI metadata response is unexpectedly large")
+    value = json.loads(data.decode("utf-8"))
+    if not isinstance(value, dict):
+        fail("PyPI metadata response is not an object")
+    return value
+
+
+def download_locked_wheel(destination: Path, wheel: dict) -> None:
+    name = urllib.parse.quote(wheel["name"], safe="")
+    version = urllib.parse.quote(wheel["version"], safe="")
+    metadata = download_json(f"https://pypi.org/pypi/{name}/{version}/json")
+    candidates = [
+        item
+        for item in metadata.get("urls", [])
+        if isinstance(item, dict)
+        and item.get("filename") == wheel["filename"]
+        and isinstance(item.get("digests"), dict)
+        and item["digests"].get("sha256") == wheel["sha256"]
+    ]
+    if len(candidates) != 1:
+        fail(f"PyPI metadata does not identify locked wheel: {wheel['filename']}")
+
+    candidate = candidates[0]
+    url = candidate.get("url")
+    expected_size = candidate.get("size")
+    if (
+        not isinstance(url, str)
+        or not url.startswith("https://")
+        or type(expected_size) is not int
+        or expected_size < 1
+        or expected_size > 128 * 1024 * 1024
+    ):
+        fail(f"PyPI metadata is invalid for locked wheel: {wheel['filename']}")
+
+    target = destination / wheel["filename"]
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "fre3nder-apps/prepare-octoapp"},
+    )
+    digest = hashlib.sha256()
+    size = 0
+    with urllib.request.urlopen(request, timeout=60) as response, target.open("xb") as output:
+        if not response.geturl().startswith("https://"):
+            fail(f"wheel download left HTTPS: {wheel['filename']}")
+        for chunk in iter(lambda: response.read(1024 * 1024), b""):
+            size += len(chunk)
+            if size > expected_size:
+                fail(f"wheel exceeds locked PyPI size: {wheel['filename']}")
+            digest.update(chunk)
+            output.write(chunk)
+
+    if size != expected_size:
+        fail(f"wheel size mismatch: {wheel['filename']}")
+    if digest.hexdigest() != wheel["sha256"]:
+        fail(f"wheel SHA-256 mismatch: {wheel['filename']}")
+
+
+def download_wheels(destination: Path, lock: dict) -> None:
+    for wheel in lock["wheels"]:
+        download_locked_wheel(destination, wheel)
+
+
+def wheel_source(directory: Path | None, temporary: Path, lock: dict) -> Path:
+    if directory is None:
+        directory = temporary / "wheels"
+        directory.mkdir()
+        download_wheels(directory, lock)
+    else:
+        directory = directory.resolve()
+        if not directory.is_dir():
+            fail("OctoApp wheel directory does not exist")
+
+    expected_names = {wheel["filename"] for wheel in lock["wheels"]}
+    actual_names = {path.name for path in directory.iterdir() if path.is_file()}
+    if actual_names != expected_names:
+        fail(
+            "OctoApp wheel set mismatch: "
+            f"missing={sorted(expected_names - actual_names)}, "
+            f"unexpected={sorted(actual_names - expected_names)}"
+        )
+    for wheel in lock["wheels"]:
+        verify_wheel(directory / wheel["filename"], wheel)
+    return directory
+
+
+def safe_wheel_path(name: str) -> PurePosixPath:
+    if (
+        not name
+        or name.startswith("/")
+        or "\\" in name
+        or any(ord(char) < 32 or ord(char) == 127 for char in name)
+    ):
+        fail(f"unsafe wheel member: {name!r}")
+    path = PurePosixPath(name)
+    if any(part in ("", ".", "..") for part in path.parts):
+        fail(f"unsafe wheel member: {name!r}")
+    return path
+
+
+def extract_wheel(path: Path, destination: Path, installed: set[str]) -> None:
+    with zipfile.ZipFile(path) as archive:
+        for member in sorted(archive.infolist(), key=lambda item: item.filename):
+            relative = safe_wheel_path(member.filename)
+            mode = (member.external_attr >> 16) & 0o170000
+            if mode == stat.S_IFLNK:
+                fail(f"wheel symlink is not supported: {member.filename}")
+
+            parts = relative.parts
+            data_index = next(
+                (index for index, part in enumerate(parts) if part.endswith(".data")),
+                None,
+            )
+            if data_index is not None:
+                if (
+                    len(parts) <= data_index + 2
+                    or parts[data_index + 1] not in ("purelib", "platlib")
+                ):
+                    fail(f"unsupported wheel .data member: {member.filename}")
+                relative = PurePosixPath(*parts[data_index + 2 :])
+                if not relative.parts:
+                    continue
+
+            if relative.suffix == ".so":
+                fail(f"universal wheel contains native extension: {member.filename}")
+
+            target = destination.joinpath(*relative.parts)
+            key = relative.as_posix()
+            if member.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            if key in installed or target.exists():
+                fail(f"duplicate dependency file: {key}")
+            installed.add(key)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(member) as src, target.open("xb") as dst:
+                shutil.copyfileobj(src, dst)
+            target.chmod(0o644)
+
+
+def copy_tree_checked(source: Path, destination: Path) -> None:
+    if source.is_symlink() or not source.is_dir():
+        fail(f"dependency source is missing or unsafe: {source}")
+    for path in sorted(source.rglob("*")):
+        relative = path.relative_to(source)
+        target = destination / relative
+        if path.is_symlink():
+            fail(f"dependency source contains symlink: {path}")
+        if path.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+        elif path.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
+            target.chmod(0o644)
+        else:
+            fail(f"unsupported dependency source member: {path}")
+
+
+def validate_pillow_abi(buildroot_output: Path, extensions: list[Path]) -> None:
+    readelf = (
+        buildroot_output.resolve()
+        / "host"
+        / "bin"
+        / "mipsel-buildroot-linux-gnu-readelf"
+    )
+    if not readelf.is_file() or not os.access(readelf, os.X_OK):
+        fail(f"Fre3nder target readelf is missing: {readelf}")
+    for extension in extensions:
+        header = subprocess.check_output([str(readelf), "-h", str(extension)], text=True)
+        attributes = subprocess.check_output([str(readelf), "-A", str(extension)], text=True)
+        if (
+            "Class:                             ELF32" not in header
+            or "Data:                              2's complement, little endian" not in header
+            or "o32" not in header
+            or "mips32r2" not in header
+            or "nan2008" not in header
+            or "ISA: MIPS32r2" not in attributes
+            or "FP ABI: Hard float (32-bit CPU, Any FPU)" not in attributes
+        ):
+            fail(f"Pillow extension has unexpected Fre3nder ABI: {extension.name}")
+
+
+def stage_pillow(buildroot_output: Path, destination: Path) -> None:
+    site = (
+        buildroot_output.resolve()
+        / "target"
+        / "usr"
+        / "lib"
+        / f"python{PYTHON_MINOR}"
+        / "site-packages"
+    )
+    pil = site / "PIL"
+    if not pil.is_dir():
+        fail(f"cross-built Pillow package is missing: {pil}")
+    dist_infos = [
+        path for path in site.iterdir()
+        if path.is_dir()
+        and path.name.lower().startswith("pillow-")
+        and path.name.endswith(".dist-info")
+    ]
+    if len(dist_infos) != 1:
+        fail("expected exactly one cross-built Pillow dist-info directory")
+    extensions = list(pil.glob("_imaging*.so"))
+    if not extensions:
+        fail("cross-built Pillow lacks _imaging extension")
+    validate_pillow_abi(buildroot_output, extensions)
+    copy_tree_checked(pil, destination / "PIL")
+    copy_tree_checked(dist_infos[0], destination / dist_infos[0].name)
+
+
+def dependency_tree_hash(root: Path) -> str:
+    digest = hashlib.sha256()
+    files = [path for path in root.rglob("*") if path.is_file()]
+    if not files:
+        fail("OctoApp dependency tree is empty")
+    for path in sorted(files, key=lambda value: value.relative_to(root).as_posix()):
+        relative = path.relative_to(root).as_posix().encode("utf-8")
+        digest.update(len(relative).to_bytes(4, "big"))
+        digest.update(relative)
+        data = path.read_bytes()
+        digest.update(len(data).to_bytes(8, "big"))
+        digest.update(data)
+    return digest.hexdigest()
+
+
+def copy_runtime_source(checkout: Path, destination: Path) -> None:
+    destination.mkdir(parents=True)
+    shutil.copy2(checkout / "pyproject.toml", destination / "pyproject.toml")
+    for name in ("octoapp", "moonraker_octoapp", "linux_host"):
+        copy_tree_checked(checkout / name, destination / name)
+
+    # Fre3nder owns application lifecycle and updates. The upstream
+    # SystemConfigManager is deliberately not part of the packaged runtime.
+    system_config = destination / "moonraker_octoapp/systemconfigmanager.py"
+    if not system_config.is_file() or system_config.is_symlink():
+        fail("upstream systemconfigmanager.py is missing or unsafe")
+    system_config.unlink()
+
+
+
+
+def prepare(
+    destination: Path,
+    buildroot_output: Path,
+    *,
+    source: Path | None = None,
+    wheel_dir: Path | None = None,
+) -> None:
+    upstream = load_json(UPSTREAM_FILE)
+    lock = load_json(LOCK_FILE)
+    validate_inputs(upstream, lock)
+
+    if destination.is_symlink():
+        fail("OctoApp payload destination must not be a symlink")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory(
+        dir=destination.parent, prefix=".octoapp-"
+    ) as tmp_name:
+        temporary = Path(tmp_name)
+        checkout = source_checkout(temporary, upstream, source)
+        apply_fre3nder_patch(checkout)
+        verify_upstream_source(checkout, upstream)
+
+        staged = temporary / "payload"
+        app_destination = staged / "app"
+        dependencies = staged / "python" / "site-packages"
+        licenses = staged / "licenses"
+        dependencies.mkdir(parents=True)
+        licenses.mkdir(parents=True)
+
+        copy_runtime_source(checkout, app_destination)
+        shutil.copy2(checkout / "LICENSE", licenses / "LICENSE.octoapp")
+
+        wheels = wheel_source(wheel_dir, temporary, lock)
+        installed: set[str] = set()
+        for wheel in lock["wheels"]:
+            extract_wheel(wheels / wheel["filename"], dependencies, installed)
+        stage_pillow(buildroot_output, dependencies)
+        stage_pycryptodomex(buildroot_output, dependencies)
+
+        tree_hash = dependency_tree_hash(dependencies)
+        (staged / "runtime.json").write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "app_version": upstream["version"],
+                    "upstream_commit": upstream["commit"],
+                    "python": PYTHON_MINOR,
+                    "dependency_tree_sha256": tree_hash,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        previous = temporary / "previous"
+        if destination.exists():
+            os.replace(destination, previous)
+        try:
+            os.replace(staged, destination)
+        except Exception:
+            if previous.exists():
+                os.replace(previous, destination)
+            raise
+
+
+
+def stage_pycryptodomex(
+    buildroot_output,
+    destination,
+):
+    native = (
+        ROOT
+        / "local/octoapp/pycryptodomex"
+    )
+
+    meta_path = (
+        native
+        / "native.json"
+    )
+
+    site = (
+        native
+        / "site-packages"
+    )
+
+    if not meta_path.is_file():
+        fail(
+            "OctoApp native dependency "
+            "bundle missing; run "
+            "scripts/build-octoapp-native first"
+        )
+
+    meta = json.loads(
+        meta_path.read_text(
+            encoding="utf-8"
+        )
+    )
+
+    expected = {
+        "name":
+            "pycryptodomex",
+        "version":
+            "3.21.0",
+        "namespace":
+            "Cryptodome",
+        "source_sha256":
+            "222d0bd05381dd25c32dd6065c071ebf084212ab79bab4599ba9e6a3e0009e6c",
+        "buildroot_target":
+            "python-pycryptodomex-build",
+    }
+
+    for key, value in expected.items():
+        if meta.get(key) != value:
+            fail(
+                "OctoApp native metadata "
+                f"mismatch: {key}"
+            )
+
+    crypto = (
+        site
+        / "Cryptodome"
+    )
+
+    dist = (
+        site
+        / "pycryptodomex-3.21.0.dist-info"
+    )
+
+    if (
+        not crypto.is_dir()
+        or not dist.is_dir()
+    ):
+        fail(
+            "OctoApp native Cryptodome "
+            "bundle is incomplete"
+        )
+
+    readelf = (
+        buildroot_output
+        / "host/bin/"
+          "mipsel-buildroot-linux-gnu-readelf"
+    )
+
+    if not readelf.is_file():
+        fail(
+            f"cross readelf missing: "
+            f"{readelf}"
+        )
+
+    extensions = sorted(
+        crypto.rglob("*.so")
+    )
+
+    if not extensions:
+        fail(
+            "OctoApp native Cryptodome "
+            "bundle has no extensions"
+        )
+
+    for so in extensions:
+        header = subprocess.run(
+            [
+                str(readelf),
+                "-h",
+                str(so),
+            ],
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+        ).stdout
+
+        attrs = subprocess.run(
+            [
+                str(readelf),
+                "-A",
+                str(so),
+            ],
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+        ).stdout
+
+        for needle, haystack in (
+            ("ELF32", header),
+            ("little endian", header),
+            ("o32", header),
+            ("mips32r2", header),
+            ("nan2008", header),
+            ("ISA: MIPS32r2", attrs),
+            (
+                "FP ABI: Hard float "
+                "(32-bit CPU, Any FPU)",
+                attrs,
+            ),
+        ):
+            if needle not in haystack:
+                fail(
+                    "Cryptodome ABI check "
+                    f"failed for {so}: "
+                    f"{needle}"
+                )
+
+    copy_tree_checked(
+        crypto,
+        destination / "Cryptodome",
+    )
+
+    copy_tree_checked(
+        dist,
+        destination / dist.name,
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--buildroot-output", required=True, type=Path)
+    parser.add_argument("--source", type=Path)
+    parser.add_argument("--wheel-dir", type=Path)
+    args = parser.parse_args()
+    try:
+        prepare(
+            SOURCE / "payload",
+            args.buildroot_output,
+            source=args.source,
+            wheel_dir=args.wheel_dir,
+        )
+    except (
+        OSError,
+        ValueError,
+        json.JSONDecodeError,
+        subprocess.CalledProcessError,
+        zipfile.BadZipFile,
+    ) as exc:
+        print(f"prepare-octoapp: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

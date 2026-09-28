@@ -1,5 +1,6 @@
 /dist/
 /local/
 /apps/fluidd/payload/
+/apps/octoapp/payload/
 __pycache__/
 *.py[cod]

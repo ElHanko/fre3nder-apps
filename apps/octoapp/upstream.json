@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "project": "OctoApp-Plugin",
+  "repository": "https://github.com/crysxd/OctoApp-Plugin.git",
+  "branch": "release",
+  "version": "3.2.4",
+  "commit": "f6d0cc21aefe77e54aa8e8674c65e911bed1a55e",
+  "license": "AGPL-3.0-or-later",
+  "runtime": "moonraker_octoapp",
+  "python": "3.12"
+}

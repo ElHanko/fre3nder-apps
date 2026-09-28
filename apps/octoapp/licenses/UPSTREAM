@@ -1,0 +1,42 @@
+OctoApp upstream provenance
+===========================
+
+Project: OctoApp-Plugin
+Repository: https://github.com/crysxd/OctoApp-Plugin
+Release branch: release
+Version: 3.2.4
+Commit: f6d0cc21aefe77e54aa8e8674c65e911bed1a55e
+License: AGPL-3.0-or-later
+
+Fre3nder packages the Klipper/Moonraker runtime in companion mode against the
+local Moonraker instance. The upstream installer,
+system-service creation, package-manager integration and Moonraker git updater
+are not used.
+
+Fre3nder carries one narrow integration patch:
+patches/0001-fre3nder-disable-system-config.patch
+
+The patch removes OctoApp's Moonraker update-manager and allowed-service
+integration from the local Moonraker host. The unused upstream
+systemconfigmanager.py is omitted from the packaged runtime. Fre3nder's signed
+.fre3app lifecycle remains the sole update and service-management path.
+
+Python dependencies are locked separately in python-wheels.json. Pure-Python
+wheels are downloaded and hash-verified on the build host. Pillow is copied
+from the Fre3nder X2000 Buildroot output, where it is cross-built for the
+hardware-qualified userspace ABI.
+
+Native crypto dependency:
+- pycryptodomex 3.21.0 from Buildroot 2025.02.18.
+- Built with `python-pycryptodomex-build` only; it is not installed into the
+  Fre3nder RootFS.
+- Source SHA-256:
+  222d0bd05381dd25c32dd6065c071ebf084212ab79bab4599ba9e6a3e0009e6c
+- License: BSD-2-Clause and Public Domain.
+- OctoApp's `Crypto` imports are patched to the equivalent `Cryptodome`
+  namespace.
+
+octoflatbuffers 24.3.27:
+- License: Apache-2.0.
+- The locked wheel contains no license file, so Fre3nder carries
+  `licenses/LICENSE.octoflatbuffers` explicitly.

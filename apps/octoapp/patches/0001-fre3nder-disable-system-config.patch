@@ -1,0 +1,82 @@
+diff --git a/moonraker_octoapp/moonrakerclient.py b/moonraker_octoapp/moonrakerclient.py
+index ea3f142..7ddfda6 100644
+--- a/moonraker_octoapp/moonrakerclient.py
++++ b/moonraker_octoapp/moonrakerclient.py
+@@ -127,7 +127,7 @@ class MoonrakerClient(IMoonrakerClient):
+         # If we aren't in companion mode, ensure there's a valid moonraker config file on disk
+         if Compat.IsCompanionMode() is False and self.MoonrakerConfigFilePath is not None:
+             if os.path.exists(self.MoonrakerConfigFilePath) is False:
+-                self.Logger.error("Moonraker client failed to find a moonraker config. Re-run the ./install.sh script from the OctoApp repo to update the path.")
++                self.Logger.error("Moonraker client failed to find the configured moonraker.conf path.")
+                 raise NoSentryReportException("No moonraker config file found")
+ 
+         # Get the values.
+diff --git a/moonraker_octoapp/moonrakerhost.py b/moonraker_octoapp/moonrakerhost.py
+index eab34f9..b7b3651 100644
+--- a/moonraker_octoapp/moonrakerhost.py
++++ b/moonraker_octoapp/moonrakerhost.py
+@@ -21,7 +21,6 @@ from linux_host.secrets import Secrets
+ from linux_host.version import Version
+ from linux_host.logger import LoggerInit
+ 
+-from .systemconfigmanager import SystemConfigManager
+ from .moonrakerclient import MoonrakerClient
+ from .moonrakerdatabase import MoonrakerDatabase
+ from .moonrakercredentailmanager import MoonrakerCredentialManager
+@@ -89,13 +88,6 @@ class MoonrakerHost(IMoonrakerConnectionStatusHandler, IHostCommandHandler, ISta
+             # Enabling profiling and no filtering, since we are the only PY in this process.
+             Sentry.Setup(pluginVersionStr, "klipper", devConfig is not None, enableProfiling=True, filterExceptionsByPackage=False, restartOnCantCreateThreadBug=True)
+ 
+-            # This logic only works if running locally.
+-            if not isCompanionMode:
+-                # Before we do this first time setup, make sure our config files are in place. This is important
+-                # because if this fails it will throw. We don't want to let the user complete the install setup if things
+-                # with the update aren't working.
+-                SystemConfigManager.EnsureUpdateManagerFilesSetup(TaggedLoggingAdapter(self.RawLogger, "CONFIG"), klipperConfigDir, serviceName, pyVirtEnvRoot, repoRoot)
+-
+             # Before the first time setup, we must also init the Secrets class and do the migration for the printer id and private key, if needed.
+             # As of 8/15/2023, we don't store any sensitive things in teh config file, since all config files are sometimes backed up publicly.
+             self.Secrets = Secrets(TaggedLoggingAdapter(self.RawLogger, "SECRETS"), localStorageDir, self.Config)
+@@ -227,10 +219,6 @@ class MoonrakerHost(IMoonrakerConnectionStatusHandler, IHostCommandHandler, ISta
+             self.Secrets.SetPrinterId(printerId)
+             self.Logger.info(f"New printer id created: {printerId}")
+ 
+-        # If this is the first run, do other stuff as well.
+-        if isFirstRun:
+-            SystemConfigManager.EnsureAllowedServicesFile(self.RawLogger, klipperConfigDir, serviceName)
+-
+ 
+     # Returns None if no printer id has been set.
+     def GetPrinterId(self) -> Optional[str]:
+diff --git a/octoapp/firebaseappstorage.py b/octoapp/firebaseappstorage.py
+index 070cc10..2086489 100644
+--- a/octoapp/firebaseappstorage.py
++++ b/octoapp/firebaseappstorage.py
+@@ -9,7 +9,7 @@ from abc import abstractmethod
+ from typing import List, Any, Dict, Optional, Set
+ 
+ import requests
+-from Crypto.Cipher import AES
++from Cryptodome.Cipher import AES
+ 
+ from .logging import LoggerLike
+ from .appsstorage import AppInstance
+diff --git a/octoapp/notificationsender.py b/octoapp/notificationsender.py
+index 20780b6..8a9b893 100644
+--- a/octoapp/notificationsender.py
++++ b/octoapp/notificationsender.py
+@@ -762,11 +762,11 @@ class AESCipher:
+ 
+         if AESCipher._ready is None:
+             try:
+-                from Crypto import Random
+-                from Crypto.Cipher import AES
++                from Cryptodome import Random
++                from Cryptodome.Cipher import AES
+                 AESCipher._ready = True
+             except ImportError:
+-                Sentry.LogError("Missing Crypto, notifications will not be encrypted. This happens on Sonic Pad and K1 (maybe others)")
++                Sentry.LogError("Missing Cryptodome, notifications will not be encrypted. This happens on Sonic Pad and K1 (maybe others)")
+                 AESCipher._ready = False
+ 
+         return AESCipher._ready

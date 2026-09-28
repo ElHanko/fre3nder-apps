@@ -1,0 +1,278 @@
+#!/bin/sh
+exec /usr/bin/python3 - "$@" <<'PY'
+from __future__ import annotations
+
+import base64
+import json
+import os
+from pathlib import Path
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+
+PYTHON_MINOR = "3.12"
+APP_VERSION = "3.2.4"
+
+runtime = Path(os.environ["FRE3NDER_APP_RUNTIME_DIR"])
+data = Path(os.environ["FRE3NDER_APP_DATA_DIR"])
+payload = runtime / "payload"
+app_root = payload / "app"
+dependency_root = payload / "python" / "site-packages"
+runtime_meta = payload / "runtime.json"
+venv = data / "venv"
+state = data / "state"
+logs = data / "logs"
+pid_file = data / "octoapp.pid"
+log_file = logs / "service.log"
+site_packages_rel = Path("lib") / f"python{PYTHON_MINOR}" / "site-packages"
+
+
+def fail(message):
+    print(f"octoapp: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def metadata():
+    try:
+        value = json.loads(runtime_meta.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as exc:
+        fail(f"invalid runtime metadata: {exc}")
+    if (
+        not isinstance(value, dict)
+        or value.get("app_version") != APP_VERSION
+        or value.get("python") != PYTHON_MINOR
+        or not isinstance(value.get("dependency_tree_sha256"), str)
+        or len(value["dependency_tree_sha256"]) != 64
+    ):
+        fail("runtime metadata does not match this package")
+    return value
+
+
+def valid_payload():
+    if not app_root.is_dir() or not dependency_root.is_dir():
+        return False
+    for required in (
+        app_root / "pyproject.toml",
+        app_root / "octoapp",
+        app_root / "moonraker_octoapp",
+        app_root / "linux_host",
+    ):
+        if not required.exists():
+            return False
+    return True
+
+
+def marker_matches(expected):
+    marker = venv / ".fre3nder-runtime.json"
+    try:
+        actual = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    return actual == expected and (venv / "bin/python3").exists()
+
+
+def build_venv():
+    if f"{sys.version_info.major}.{sys.version_info.minor}" != PYTHON_MINOR:
+        fail(f"unsupported system Python: {sys.version.split()[0]}")
+    expected = metadata()
+    if not valid_payload():
+        fail("signed runtime payload is missing")
+    if marker_matches(expected):
+        return
+
+    data.mkdir(parents=True, exist_ok=True)
+    staged = data / ".venv.new"
+    previous = data / ".venv.previous"
+    shutil.rmtree(staged, ignore_errors=True)
+    shutil.rmtree(previous, ignore_errors=True)
+
+    (staged / "bin").mkdir(parents=True)
+    site_packages = staged / site_packages_rel
+    site_packages.mkdir(parents=True)
+
+    os.symlink("/usr/bin/python3", staged / "bin/python3")
+    os.symlink("python3", staged / "bin/python")
+    (staged / "pyvenv.cfg").write_text(
+        "\n".join(
+            (
+                "home = /usr/bin",
+                "include-system-site-packages = false",
+                f"version = {sys.version.split()[0]}",
+                "executable = /usr/bin/python3",
+                "command = fre3nder-app",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    for source in sorted(dependency_root.iterdir(), key=lambda path: path.name):
+        target = site_packages / source.name
+        if source.is_symlink():
+            fail(f"dependency payload contains symlink: {source.name}")
+        if source.is_dir():
+            shutil.copytree(source, target)
+        elif source.is_file():
+            shutil.copy2(source, target)
+        else:
+            fail(f"unsupported dependency payload entry: {source.name}")
+
+    (staged / ".fre3nder-runtime.json").write_text(
+        json.dumps(expected, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(app_root)
+    smoke = subprocess.run(
+        [
+            str(staged / "bin/python3"),
+            "-c",
+            (
+                "import certifi,dns,httpx,octoflatbuffers,octowebsocket,qrcode,"
+                "requests,rsa,urllib3; from PIL import Image; from Cryptodome.Cipher import AES; from Cryptodome import Random; "
+                "import moonraker_octoapp,octoapp"
+            ),
+        ],
+        cwd=app_root,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if smoke.returncode != 0:
+        shutil.rmtree(staged, ignore_errors=True)
+        fail(f"isolated Python environment smoke test failed: {smoke.stderr.strip()}")
+
+    if venv.exists():
+        os.replace(venv, previous)
+    try:
+        os.replace(staged, venv)
+    except Exception:
+        if previous.exists():
+            os.replace(previous, venv)
+        raise
+    shutil.rmtree(previous, ignore_errors=True)
+
+
+def read_pid():
+    try:
+        pid = int(pid_file.read_text(encoding="ascii").strip())
+    except (OSError, ValueError):
+        return None
+    return pid if pid > 1 else None
+
+
+def process_is_octoapp(pid):
+    try:
+        cmdline = (Path("/proc") / str(pid) / "cmdline").read_bytes()
+    except OSError:
+        return False
+    return b"moonraker_octoapp" in cmdline
+
+
+def running():
+    pid = read_pid()
+    return pid is not None and process_is_octoapp(pid)
+
+
+def stop():
+    pid = read_pid()
+    if pid is None:
+        pid_file.unlink(missing_ok=True)
+        return
+    if not process_is_octoapp(pid):
+        pid_file.unlink(missing_ok=True)
+        return
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pid_file.unlink(missing_ok=True)
+        return
+    for _ in range(50):
+        if not process_is_octoapp(pid):
+            pid_file.unlink(missing_ok=True)
+            return
+        time.sleep(0.1)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    pid_file.unlink(missing_ok=True)
+
+
+def start():
+    build_venv()
+    if running():
+        return
+
+    state.mkdir(parents=True, exist_ok=True)
+    logs.mkdir(parents=True, exist_ok=True)
+
+    config_file = state / "octoapp.conf"
+    if not config_file.exists():
+        config_file.write_text(
+            "[companion]\n"
+            "ip_or_hostname = 127.0.0.1\n"
+            "port = 17126\n",
+            encoding="utf-8",
+        )
+
+    args = {
+        "ConfigFolder": str(state),
+        "LogFolder": str(logs),
+        "LocalFileStoragePath": str(state),
+        "ServiceName": "octoapp",
+        "VirtualEnvPath": str(venv),
+        "RepoRootFolder": str(app_root),
+        "IsCompanion": True,
+    }
+    encoded = base64.urlsafe_b64encode(
+        json.dumps(args, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii")
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(app_root)
+
+    with log_file.open("ab", buffering=0) as log:
+        process = subprocess.Popen(
+            [str(venv / "bin/python3"), "-m", "moonraker_octoapp", encoded],
+            cwd=app_root,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    pid_file.write_text(f"{process.pid}\n", encoding="ascii")
+    time.sleep(0.5)
+    if process.poll() is not None:
+        pid_file.unlink(missing_ok=True)
+        fail(f"process exited during startup with code {process.returncode}")
+
+
+action = sys.argv[1] if len(sys.argv) == 2 else ""
+
+if action in ("install", "update", "restore"):
+    build_venv()
+elif action == "start":
+    start()
+elif action == "stop":
+    stop()
+elif action == "status":
+    raise SystemExit(0 if running() else 1)
+elif action == "uninstall":
+    stop()
+    shutil.rmtree(venv, ignore_errors=True)
+else:
+    print(
+        "usage: service {install|update|restore|start|stop|status|uninstall}",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+PY
