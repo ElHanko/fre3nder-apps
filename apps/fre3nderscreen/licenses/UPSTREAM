@@ -1,0 +1,16 @@
+Fre3nderScreen source: https://github.com/ElHanko/fre3nderscreen.git
+The imported payload/artifact-manifest.json records the resolved source
+release, commit, submodule commits, and Fre3nder build identity.
+
+Fre3nderScreen is derived from Guppy Screen. Its source history and copyright
+notices remain in the source. COPYING is Fre3nderScreen's GPL version 3
+text. The build applies Fre3nderScreen's source-owned submodule patches.
+LVGL, lv_drivers, and spdlog are MIT licensed; libhv and the inherited
+wpa_supplicant control client are BSD-3-Clause licensed. Their license texts
+are included here. These licenses permit redistribution with their notices.
+
+The compiled DejaVu Sans Mono asset was inherited from Guppy Screen; the
+original font version and TTF cannot be reconstructed from this source tree.
+DEJAVU-FONTS-LICENSE preserves the applicable Bitstream Vera derived terms.
+The inherited Material Design Icons assets are credited to Pictogrammers in
+the Fre3nderScreen source; MATERIAL-DESIGN-ICONS-LICENSE is Apache-2.0.

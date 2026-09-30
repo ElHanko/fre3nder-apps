@@ -132,6 +132,17 @@ def render_manifest(source: pathlib.Path, fingerprint: str) -> bytes:
     if not isinstance(web, dict) or type(web.get("frontend", False)) is not bool:
         fail("manifest web capability is invalid")
 
+    display = manifest.get("display", {})
+    if not isinstance(display, dict) or type(display.get("frontend", False)) is not bool:
+        fail("manifest display capability is invalid")
+    if display.get("frontend", False):
+        if type(display.get("api")) is not int or display["api"] != 1:
+            fail("manifest display API is invalid")
+        if runtime.get("autostart", True):
+            fail("display frontend must disable autostart")
+    elif display.get("api") is not None:
+        fail("display API requires display frontend capability")
+
     if signature != {
         "algorithm": "Ed25519",
         "file": "SHA256SUMS.sig",
@@ -162,7 +173,7 @@ def write_zip(output: pathlib.Path, files: dict[str, bytes]) -> None:
     try:
         with zipfile.ZipFile(temp, "w", allowZip64=True) as archive:
             for name in sorted(files):
-                mode = 0o755 if name == "service" else 0o644
+                mode = 0o755 if name == "service" or name.startswith("payload/bin/") else 0o644
                 archive.writestr(zip_info(name, mode), files[name])
         os.replace(temp, output)
     finally:

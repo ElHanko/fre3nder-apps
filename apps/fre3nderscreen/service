@@ -1,0 +1,107 @@
+#!/bin/sh
+set -eu
+
+umask 077
+runtime=${FRE3NDER_APP_RUNTIME_DIR:?}
+data=${FRE3NDER_APP_DATA_DIR:?}
+binary=$runtime/payload/bin/fre3nderscreen
+themes=$runtime/payload/themes
+defaults=$runtime/payload/defaults/fre3nderscreen.json
+config=$data/fre3nderscreen.json
+pid_file=$data/fre3nderscreen.pid
+log=$data/logs/service.log
+
+prepare_data() {
+    mkdir -p "$data/logs"
+    if [ ! -e "$config" ] && [ ! -L "$config" ]; then
+        cp "$defaults" "$config"
+    fi
+}
+
+running() {
+    [ -f "$pid_file" ] && [ ! -L "$pid_file" ] || return 1
+    pid=$(cat "$pid_file")
+    case "$pid" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "$pid" -gt 1 ] && [ -r "/proc/$pid/cmdline" ] || return 1
+    tr '\000' '\n' < "/proc/$pid/environ" |
+        grep -Fxq "FRE3NDER_APP_DATA_DIR=$data" || return 1
+    command=$(tr '\000' '\n' < "/proc/$pid/cmdline")
+    first=$(printf '%s\n' "$command" | sed -n '1p')
+    second=$(printf '%s\n' "$command" | sed -n '2p')
+    if [ "$first" = "$binary" ]; then
+        [ "$(readlink "/proc/$pid/exe")" = "$binary" ]
+    else
+        # Script executables are used by the host tests.
+        [ "$second" = "$binary" ] || return 1
+        case "$first" in
+            */sh|*/dash|*/busybox|*/python3*) ;;
+            *) return 1 ;;
+        esac
+    fi
+}
+
+stop_screen() {
+    if running; then
+        kill "$pid"
+        tries=0
+        while running && [ "$tries" -lt 50 ]; do
+            sleep 0.1
+            tries=$((tries + 1))
+        done
+        if running; then
+            kill -KILL "$pid"
+        fi
+    fi
+    rm -f -- "$pid_file"
+}
+
+case "${1:-}" in
+install|update|restore)
+    prepare_data
+    ;;
+start)
+    [ "${FRE3NDER_DISPLAY_API:-}" = 1 ] || {
+        echo 'fre3nderscreen: display API 1 is required' >&2
+        exit 1
+    }
+    [ -n "${FRE3NDER_DISPLAY_FRAMEBUFFER:-}" ] &&
+        [ -n "${FRE3NDER_DISPLAY_INPUT:-}" ] || {
+        echo 'fre3nderscreen: framebuffer and input are required' >&2
+        exit 1
+    }
+    [ -x "$binary" ] && [ -d "$themes" ] || {
+        echo 'fre3nderscreen: payload is missing' >&2
+        exit 1
+    }
+    if running; then
+        exit 0
+    fi
+    prepare_data
+    [ ! -L "$config" ] || {
+        echo 'fre3nderscreen: config must not be a symlink' >&2
+        exit 1
+    }
+    rm -f -- "$pid_file"
+    export FRE3NDERSCREEN_FRAMEBUFFER="$FRE3NDER_DISPLAY_FRAMEBUFFER"
+    export FRE3NDERSCREEN_INPUT="$FRE3NDER_DISPLAY_INPUT"
+    export FRE3NDERSCREEN_BACKLIGHT_POWER="${FRE3NDER_DISPLAY_BACKLIGHT_POWER:-}"
+    export FRE3NDERSCREEN_BEEPER_INPUT="${FRE3NDER_DISPLAY_BEEPER:-}"
+    export FRE3NDERSCREEN_CONFIG="$config"
+    export FRE3NDERSCREEN_THEME_DIR="$themes"
+    cd "$data"
+    "$binary" </dev/null >>"$log" 2>&1 &
+    printf '%s\n' "$!" > "$pid_file"
+    ;;
+stop|uninstall)
+    stop_screen
+    ;;
+status)
+    running
+    ;;
+*)
+    echo 'usage: service {install|update|restore|start|stop|status|uninstall}' >&2
+    exit 2
+    ;;
+esac

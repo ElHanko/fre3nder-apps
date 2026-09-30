@@ -2,5 +2,6 @@
 /local/
 /apps/fluidd/payload/
 /apps/octoapp/payload/
+/apps/fre3nderscreen/payload/
 __pycache__/
 *.py[cod]

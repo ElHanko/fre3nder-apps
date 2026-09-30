@@ -3,6 +3,7 @@
 
 import hashlib
 import pathlib
+import runpy
 import shutil
 import subprocess
 import tempfile
@@ -14,6 +15,65 @@ import zipfile
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BUILDER = ROOT / "scripts/build-fre3app"
 DUMMY = ROOT / "apps/dummy"
+
+
+class DisplayManifestTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.source = pathlib.Path(self.temp.name)
+        self.template = (DUMMY / "manifest.toml.in").read_text()
+        self.render_manifest = runpy.run_path(str(BUILDER))["render_manifest"]
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def render(self, display="", autostart=True):
+        text = self.template.replace(
+            "autostart = true", f"autostart = {str(autostart).lower()}"
+        ).replace("[signature]", f"{display}\n[signature]")
+        (self.source / "manifest.toml.in").write_text(text)
+        return tomllib.loads(
+            self.render_manifest(self.source, "a" * 64).decode("utf-8")
+        )
+
+    def test_existing_recipes_have_no_display_capability(self):
+        for name in ("dummy", "fluidd", "octoapp"):
+            with self.subTest(name=name):
+                source = ROOT / "apps" / name
+                manifest = tomllib.loads(
+                    self.render_manifest(source, "a" * 64).decode("utf-8")
+                )
+                self.assertNotIn("display", manifest)
+
+    def test_display_frontend_api_one_requires_no_autostart(self):
+        manifest = self.render("[display]\nfrontend = true\napi = 1", False)
+        self.assertEqual(manifest["display"], {"frontend": True, "api": 1})
+
+    def test_display_false_without_api_is_valid(self):
+        self.assertEqual(
+            self.render("[display]\nfrontend = false")["display"],
+            {"frontend": False},
+        )
+
+    def test_invalid_display_contracts(self):
+        cases = (
+            ("[display]\nfrontend = \"true\"", False, "display capability"),
+            ("[display]\nfrontend = 1", False, "display capability"),
+            ("[display]\nfrontend = true", False, "display API"),
+            ("[display]\nfrontend = true\napi = true", False, "display API"),
+            ("[display]\nfrontend = true\napi = 2", False, "display API"),
+            ("[display]\napi = 1", False, "requires display frontend"),
+            (
+                "[display]\nfrontend = false\napi = 1",
+                False,
+                "requires display frontend",
+            ),
+            ("[display]\nfrontend = true\napi = 1", True, "disable autostart"),
+        )
+        for display, autostart, error in cases:
+            with self.subTest(display=display, autostart=autostart):
+                with self.assertRaisesRegex(ValueError, error):
+                    self.render(display, autostart)
 
 
 class BuildFre3AppTests(unittest.TestCase):

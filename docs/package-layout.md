@@ -35,6 +35,10 @@ The archive is a ZIP container using stored members, fixed timestamps, fixed
 modes, and sorted member order so identical inputs and the same signing key
 produce byte-identical output.
 
+Files under `payload/bin/` are installed executable with mode 0755.
+Other payload files are installed with mode 0644. The platform extracts both
+from the verified signed archive.
+
 An optional `[web] frontend = true` declares a static web frontend. Such a
 package must contain a nonempty `payload/index.html`; the platform serves its
 signed payload at `/opt/fre3nder/apps-v2/<app>/payload`. A missing `[web]`

@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+"""Import a verified, previously built Fre3nderScreen X2000 app artifact."""
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import stat
+import tempfile
+import tomllib
+
+
+ROOT = Path(__file__).resolve().parents[1]
+RECIPE = ROOT / "apps/fre3nderscreen"
+SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+COMMIT = re.compile(r"[0-9a-f]{40}\Z")
+THEMES = {f"themes/{name}.json" for name in ("blue", "green", "pink", "purple", "red", "yellow")}
+LICENSES = {path.name for path in (RECIPE / "licenses").iterdir() if path.name != "UPSTREAM"}
+FILES = {"bin/fre3nderscreen", *THEMES, *(f"licenses/{name}" for name in LICENSES)}
+ABI = {"arch": "mipsel", "isa": "mips32r2", "float_abi": "hard", "nan": "nan2008", "linkage": "static"}
+
+
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def validate(artifact):
+    if not artifact.is_dir() or artifact.is_symlink():
+        raise ValueError("app artifact directory is missing or a symlink")
+    actual = set()
+    for path in artifact.rglob("*"):
+        if path.is_symlink():
+            raise ValueError(f"artifact contains symlink: {path}")
+        if path.is_file():
+            if not stat.S_ISREG(path.lstat().st_mode):
+                raise ValueError(f"not a regular artifact file: {path}")
+            actual.add(path.relative_to(artifact).as_posix())
+        elif not path.is_dir():
+            raise ValueError(f"unsupported artifact member: {path}")
+    if actual != FILES | {"artifact-manifest.json", "SHA256SUMS"}:
+        raise ValueError("app artifact file set differs from recipe")
+
+    manifest = json.loads((artifact / "artifact-manifest.json").read_text())
+    source = manifest.get("source", {})
+    if (manifest.get("schema") != 1
+            or manifest.get("artifact") != "fre3nderscreen-x2000-app"
+            or manifest.get("artifact_mode") != "release"
+            or manifest.get("abi") != ABI
+            or not isinstance(source, dict)
+            or not isinstance(source.get("repository"), str)
+            or not source["repository"].startswith("https://")
+            or not isinstance(source.get("commit"), str)
+            or not COMMIT.fullmatch(source["commit"])
+            or source.get("license") != "GPL-3.0-only"):
+        raise ValueError("app artifact identity, mode, source, or ABI is invalid")
+    package = tomllib.loads((RECIPE / "manifest.toml.in").read_text())
+    if not isinstance(source.get("release"), str) or not package["app"]["version"].startswith(source["release"] + "-fre3nder."):
+        raise ValueError("app artifact source release differs from package version")
+    submodules = manifest.get("submodules")
+    if not isinstance(submodules, dict) or not submodules:
+        raise ValueError("app artifact submodule provenance is missing")
+    for name, record in submodules.items():
+        if (not isinstance(name, str) or not isinstance(record, dict)
+                or not isinstance(record.get("commit"), str)
+                or not COMMIT.fullmatch(record["commit"])
+                or not isinstance(record.get("license"), str)):
+            raise ValueError("app artifact submodule provenance is invalid")
+    if not isinstance(manifest.get("build_input_sha256"), str) or not SHA256.fullmatch(manifest["build_input_sha256"]):
+        raise ValueError("app artifact build identity is invalid")
+    checksums = manifest.get("files")
+    if not isinstance(checksums, dict) or set(checksums) != FILES:
+        raise ValueError("app artifact file manifest is incomplete")
+    for name, expected in checksums.items():
+        if not isinstance(expected, str) or not SHA256.fullmatch(expected) or digest(artifact / name) != expected:
+            raise ValueError(f"app artifact checksum mismatch: {name}")
+    sums = "".join(
+        f"{digest(artifact / name)}  {name}\n"
+        for name in sorted((*FILES, "artifact-manifest.json"))
+    )
+    if (artifact / "SHA256SUMS").read_text() != sums:
+        raise ValueError("app artifact SHA256SUMS mismatch")
+    for name in LICENSES:
+        original = [line.rstrip() for line in (artifact / "licenses" / name).read_bytes().splitlines()]
+        shipped = [line.rstrip() for line in (RECIPE / "licenses" / name).read_bytes().splitlines()]
+        if original != shipped:
+            raise ValueError(f"packaged license differs from artifact: {name}")
+
+
+def prepare(artifact, output):
+    validate(artifact)
+    if output.exists() or output.is_symlink():
+        raise ValueError("payload already exists; preserve or remove it first")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".fre3nderscreen-payload-", dir=output.parent) as temp:
+        stage = Path(temp) / "payload"
+        (stage / "bin").mkdir(parents=True)
+        (stage / "themes").mkdir()
+        (stage / "defaults").mkdir()
+        for name in ("bin/fre3nderscreen", *sorted(THEMES), "artifact-manifest.json"):
+            shutil.copyfile(artifact / name, stage / name)
+        (stage / "bin/fre3nderscreen").chmod(0o755)
+        shutil.copyfile(RECIPE / "defaults/fre3nderscreen.json", stage / "defaults/fre3nderscreen.json")
+        os.replace(stage, output)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--artifact", required=True, type=Path, help="existing Fre3nder artifact app/ directory")
+    parser.add_argument("--output", type=Path, default=RECIPE / "payload")
+    args = parser.parse_args()
+    prepare(args.artifact, args.output)
+
+
+if __name__ == "__main__":
+    main()
