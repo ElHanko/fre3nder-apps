@@ -57,6 +57,11 @@ class RecipeTests(unittest.TestCase):
                 "artifact-manifest.json",
                 "defaults/fre3nderscreen.json",
                 *(f"themes/{name}.json" for name in ("blue", "green", "pink", "purple", "red", "yellow")),
+                *(f"licenses/{name}" for name in (
+                    "COPYING", "DEJAVU-FONTS-LICENSE", "LIBHV-LICENSE", "LV-DRIVERS-LICENSE",
+                    "LVGL-LICENSE", "MATERIAL-DESIGN-ICONS-LICENSE", "SPDLOG-LICENSE",
+                    "WPA-SUPPLICANT-LICENSE",
+                )),
             }
             actual = {path.relative_to(payload).as_posix() for path in payload.rglob("*") if path.is_file()}
             self.assertEqual(actual, expected)
@@ -70,7 +75,7 @@ class RecipeTests(unittest.TestCase):
         default = json.loads((RECIPE / "defaults/fre3nderscreen.json").read_text())
         self.assertEqual(default["log_path"], "logs/fre3nderscreen.log")
 
-    def test_import_release_and_reject_development_or_corruption(self):
+    def test_import_modes_and_reject_corruption(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             artifact = root / "app"
@@ -80,9 +85,16 @@ class RecipeTests(unittest.TestCase):
             (artifact / "bin/fre3nderscreen").write_bytes(b"fixture binary")
             for name in ("blue", "green", "pink", "purple", "red", "yellow"):
                 (artifact / "themes" / f"{name}.json").write_text("{}\n")
-            for path in (RECIPE / "licenses").iterdir():
-                if path.name != "UPSTREAM":
-                    (artifact / "licenses" / path.name).write_bytes(path.read_bytes())
+            license_bytes = {
+                name: name.encode() + b"\r\nfixture text with trailing spaces  \r\n"
+                for name in (
+                    "COPYING", "DEJAVU-FONTS-LICENSE", "LIBHV-LICENSE", "LV-DRIVERS-LICENSE",
+                    "LVGL-LICENSE", "MATERIAL-DESIGN-ICONS-LICENSE", "SPDLOG-LICENSE",
+                    "WPA-SUPPLICANT-LICENSE",
+                )
+            }
+            for name, data in license_bytes.items():
+                (artifact / "licenses" / name).write_bytes(data)
             files = {
                 path.relative_to(artifact).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                 for path in artifact.rglob("*") if path.is_file()
@@ -97,7 +109,13 @@ class RecipeTests(unittest.TestCase):
                     "commit": "a" * 40,
                     "license": "GPL-3.0-only",
                 },
-                "submodules": {"lvgl": {"commit": "b" * 40, "license": "MIT"}},
+                "submodules": {
+                    name: {"commit": "b" * 40, "license": license}
+                    for name, license in (
+                        ("libhv", "BSD-3-Clause"), ("lv_drivers", "MIT"),
+                        ("lvgl", "MIT"), ("spdlog", "MIT"),
+                    )
+                },
                 "abi": {"arch": "mipsel", "isa": "mips32r2", "float_abi": "hard", "nan": "nan2008", "linkage": "static"},
                 "build_input_sha256": "c" * 64,
                 "files": files,
@@ -110,9 +128,10 @@ class RecipeTests(unittest.TestCase):
                     for name in sorted((*files, "artifact-manifest.json"))
                 ))
 
-            def import_artifact(output):
+            def import_artifact(output, develop=False):
                 return subprocess.run(
-                    [sys.executable, str(IMPORTER), "--artifact", str(artifact), "--output", str(output)],
+                    [sys.executable, str(IMPORTER), *(["--develop"] if develop else []),
+                     "--artifact", str(artifact), "--output", str(output)],
                     capture_output=True, text=True,
                 )
 
@@ -121,16 +140,62 @@ class RecipeTests(unittest.TestCase):
             self.assertEqual(import_artifact(payload).returncode, 0)
             self.assertEqual((payload / "bin/fre3nderscreen").read_bytes(), b"fixture binary")
             self.assertEqual(json.loads((payload / "artifact-manifest.json").read_text())["artifact_mode"], "release")
+            for name, data in license_bytes.items():
+                self.assertEqual((payload / "licenses" / name).read_bytes(), data)
             self.assertEqual(import_artifact(payload).returncode, 1)
-            manifest["artifact_mode"] = "development"
-            write_metadata()
             rejected = root / "rejected"
-            self.assertNotEqual(import_artifact(rejected).returncode, 0)
-            self.assertFalse(rejected.exists())
-            manifest["artifact_mode"] = "release"
-            write_metadata()
             (artifact / "bin/fre3nderscreen").write_bytes(b"corrupted")
             self.assertNotEqual(import_artifact(rejected).returncode, 0)
+            self.assertFalse(rejected.exists())
+            (artifact / "bin/fre3nderscreen").write_bytes(b"fixture binary")
+            self.assertNotEqual(import_artifact(rejected, develop=True).returncode, 0)
+            self.assertFalse(rejected.exists())
+            manifest["artifact_mode"] = "development"
+            manifest["source"]["commit"] = "14cd41599f1ee8dec659b282e54762fd61552c5a"
+            manifest["source"]["release"] = "2026.1.14cd415"
+            write_metadata()
+            self.assertNotEqual(import_artifact(rejected).returncode, 0)
+            self.assertFalse(rejected.exists())
+            development_payload = root / "development-payload"
+            self.assertEqual(import_artifact(development_payload, develop=True).returncode, 0)
+            self.assertEqual(json.loads((development_payload / "artifact-manifest.json").read_text())["artifact_mode"], "development")
+            (artifact / "bin/fre3nderscreen").write_bytes(b"corrupted")
+            self.assertNotEqual(import_artifact(rejected, develop=True).returncode, 0)
+            self.assertFalse(rejected.exists())
+            (artifact / "bin/fre3nderscreen").write_bytes(b"fixture binary")
+
+            license_file = artifact / "licenses/LVGL-LICENSE"
+            license_file.write_bytes(b"manipulated")
+            result = import_artifact(rejected, develop=True)
+            self.assertIn("checksum mismatch", result.stderr)
+            self.assertFalse(rejected.exists())
+            license_file.write_bytes(license_bytes["LVGL-LICENSE"])
+
+            license_file.unlink()
+            result = import_artifact(rejected, develop=True)
+            self.assertIn("file set differs", result.stderr)
+            self.assertFalse(rejected.exists())
+            license_file.write_bytes(license_bytes["LVGL-LICENSE"])
+
+            manifest["submodules"]["lvgl"]["license"] = "BSD-3-Clause"
+            write_metadata()
+            result = import_artifact(rejected, develop=True)
+            self.assertIn("submodule provenance is invalid", result.stderr)
+            self.assertFalse(rejected.exists())
+            manifest["submodules"]["lvgl"]["license"] = "MIT"
+            write_metadata()
+
+            manifest["submodules"]["unexpected"] = {"commit": "d" * 40, "license": "MIT"}
+            write_metadata()
+            result = import_artifact(rejected, develop=True)
+            self.assertIn("submodule provenance is missing", result.stderr)
+            self.assertFalse(rejected.exists())
+            del manifest["submodules"]["unexpected"]
+            write_metadata()
+
+            (artifact / "SHA256SUMS").write_text("wrong checksums\n")
+            result = import_artifact(rejected, develop=True)
+            self.assertIn("SHA256SUMS mismatch", result.stderr)
             self.assertFalse(rejected.exists())
 
     def test_service_has_no_privileged_or_old_component_commands(self):

@@ -18,7 +18,12 @@ RECIPE = ROOT / "apps/fre3nderscreen"
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 THEMES = {f"themes/{name}.json" for name in ("blue", "green", "pink", "purple", "red", "yellow")}
-LICENSES = {path.name for path in (RECIPE / "licenses").iterdir() if path.name != "UPSTREAM"}
+LICENSES = {
+    "COPYING", "DEJAVU-FONTS-LICENSE", "LIBHV-LICENSE", "LV-DRIVERS-LICENSE",
+    "LVGL-LICENSE", "MATERIAL-DESIGN-ICONS-LICENSE", "SPDLOG-LICENSE",
+    "WPA-SUPPLICANT-LICENSE",
+}
+SUBMODULE_LICENSES = {"libhv": "BSD-3-Clause", "lv_drivers": "MIT", "lvgl": "MIT", "spdlog": "MIT"}
 FILES = {"bin/fre3nderscreen", *THEMES, *(f"licenses/{name}" for name in LICENSES)}
 ABI = {"arch": "mipsel", "isa": "mips32r2", "float_abi": "hard", "nan": "nan2008", "linkage": "static"}
 
@@ -27,7 +32,7 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def validate(artifact):
+def validate(artifact, develop=False):
     if not artifact.is_dir() or artifact.is_symlink():
         raise ValueError("app artifact directory is missing or a symlink")
     actual = set()
@@ -47,7 +52,7 @@ def validate(artifact):
     source = manifest.get("source", {})
     if (manifest.get("schema") != 1
             or manifest.get("artifact") != "fre3nderscreen-x2000-app"
-            or manifest.get("artifact_mode") != "release"
+            or manifest.get("artifact_mode") != ("development" if develop else "release")
             or manifest.get("abi") != ABI
             or not isinstance(source, dict)
             or not isinstance(source.get("repository"), str)
@@ -57,16 +62,21 @@ def validate(artifact):
             or source.get("license") != "GPL-3.0-only"):
         raise ValueError("app artifact identity, mode, source, or ABI is invalid")
     package = tomllib.loads((RECIPE / "manifest.toml.in").read_text())
-    if not isinstance(source.get("release"), str) or not package["app"]["version"].startswith(source["release"] + "-fre3nder."):
+    package_version = package["app"]["version"]
+    release_series = package_version.split("-fre3nder.", 1)[0].rsplit(".", 1)[0]
+    if (not isinstance(source.get("release"), str)
+            or (develop and source["release"] != f"{release_series}.{source['commit'][:7]}")
+            or (not develop and not package_version.startswith(source["release"] + "-fre3nder."))):
         raise ValueError("app artifact source release differs from package version")
     submodules = manifest.get("submodules")
-    if not isinstance(submodules, dict) or not submodules:
+    if not isinstance(submodules, dict) or set(submodules) != set(SUBMODULE_LICENSES):
         raise ValueError("app artifact submodule provenance is missing")
-    for name, record in submodules.items():
-        if (not isinstance(name, str) or not isinstance(record, dict)
+    for name, expected_license in SUBMODULE_LICENSES.items():
+        record = submodules[name]
+        if (not isinstance(record, dict)
                 or not isinstance(record.get("commit"), str)
                 or not COMMIT.fullmatch(record["commit"])
-                or not isinstance(record.get("license"), str)):
+                or record.get("license") != expected_license):
             raise ValueError("app artifact submodule provenance is invalid")
     if not isinstance(manifest.get("build_input_sha256"), str) or not SHA256.fullmatch(manifest["build_input_sha256"]):
         raise ValueError("app artifact build identity is invalid")
@@ -82,15 +92,10 @@ def validate(artifact):
     )
     if (artifact / "SHA256SUMS").read_text() != sums:
         raise ValueError("app artifact SHA256SUMS mismatch")
-    for name in LICENSES:
-        original = [line.rstrip() for line in (artifact / "licenses" / name).read_bytes().splitlines()]
-        shipped = [line.rstrip() for line in (RECIPE / "licenses" / name).read_bytes().splitlines()]
-        if original != shipped:
-            raise ValueError(f"packaged license differs from artifact: {name}")
 
 
-def prepare(artifact, output):
-    validate(artifact)
+def prepare(artifact, output, develop=False):
+    validate(artifact, develop)
     if output.exists() or output.is_symlink():
         raise ValueError("payload already exists; preserve or remove it first")
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -98,8 +103,10 @@ def prepare(artifact, output):
         stage = Path(temp) / "payload"
         (stage / "bin").mkdir(parents=True)
         (stage / "themes").mkdir()
+        (stage / "licenses").mkdir()
         (stage / "defaults").mkdir()
-        for name in ("bin/fre3nderscreen", *sorted(THEMES), "artifact-manifest.json"):
+        for name in ("bin/fre3nderscreen", *sorted(THEMES),
+                     *(f"licenses/{name}" for name in sorted(LICENSES)), "artifact-manifest.json"):
             shutil.copyfile(artifact / name, stage / name)
         (stage / "bin/fre3nderscreen").chmod(0o755)
         shutil.copyfile(RECIPE / "defaults/fre3nderscreen.json", stage / "defaults/fre3nderscreen.json")
@@ -109,9 +116,10 @@ def prepare(artifact, output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact", required=True, type=Path, help="existing Fre3nder artifact app/ directory")
+    parser.add_argument("--develop", action="store_true", help="import a development artifact")
     parser.add_argument("--output", type=Path, default=RECIPE / "payload")
     args = parser.parse_args()
-    prepare(args.artifact, args.output)
+    prepare(args.artifact, args.output, args.develop)
 
 
 if __name__ == "__main__":
