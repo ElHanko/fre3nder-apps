@@ -8,12 +8,20 @@ binary=$runtime/payload/bin/fre3nderscreen
 themes=$runtime/payload/themes
 defaults=$runtime/payload/defaults/fre3nderscreen.json
 config=$data/fre3nderscreen.json
+legacy_config=${FRE3NDERSCREEN_LEGACY_CONFIG:-/home/fre3nder/.fre3nder/fre3nderscreen/fre3nderscreen.json}
 pid_file=$data/fre3nderscreen.pid
 log=$data/logs/service.log
 
 prepare_data() {
     mkdir -p "$data/logs"
-    if [ ! -e "$config" ] && [ ! -L "$config" ]; then
+    if [ -e "$config" ] || [ -L "$config" ]; then
+        [ -f "$config" ] && [ ! -L "$config" ] || return 1
+        return 0
+    fi
+    if [ -e "$legacy_config" ] || [ -L "$legacy_config" ]; then
+        [ -f "$legacy_config" ] && [ ! -L "$legacy_config" ] || return 1
+        cp "$legacy_config" "$config"
+    else
         cp "$defaults" "$config"
     fi
 }

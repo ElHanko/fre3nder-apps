@@ -212,6 +212,7 @@ class ServiceTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.runtime = self.root / "runtime"
         self.data = self.root / "data"
+        self.legacy = self.root / "legacy.json"
         binary = self.runtime / "payload/bin/fre3nderscreen"
         binary.parent.mkdir(parents=True)
         (self.runtime / "payload/themes").mkdir()
@@ -246,6 +247,7 @@ class ServiceTests(unittest.TestCase):
             os.environ,
             FRE3NDER_APP_RUNTIME_DIR=str(self.runtime),
             FRE3NDER_APP_DATA_DIR=str(self.data),
+            FRE3NDERSCREEN_LEGACY_CONFIG=str(self.legacy),
             FRE3NDER_DISPLAY_API="1",
             FRE3NDER_DISPLAY_FRAMEBUFFER="/test/fb",
             FRE3NDER_DISPLAY_INPUT="/test/input",
@@ -317,9 +319,34 @@ class ServiceTests(unittest.TestCase):
         self.data.mkdir()
         config = self.data / "fre3nderscreen.json"
         config.write_text('{"theme":"red"}\n')
+        self.legacy.write_text('{"theme":"blue"}\n')
         for action in ("install", "update", "restore"):
             self.assertEqual(self.action(action).returncode, 0)
             self.assertEqual(config.read_text(), '{"theme":"red"}\n')
+
+    def test_legacy_config_is_copied_once_and_retained(self):
+        self.legacy.write_bytes(b'{"theme":"purple"}\r\n')
+        self.assertEqual(self.action("install").returncode, 0)
+        config = self.data / "fre3nderscreen.json"
+        self.assertEqual(config.read_bytes(), self.legacy.read_bytes())
+        self.assertTrue(self.legacy.is_file())
+        self.legacy.write_text('{"theme":"green"}\n')
+        self.assertEqual(self.action("restore").returncode, 0)
+        self.assertEqual(config.read_bytes(), b'{"theme":"purple"}\r\n')
+
+    def test_missing_legacy_uses_default_config(self):
+        self.assertEqual(self.action("install").returncode, 0)
+        self.assertEqual(
+            (self.data / "fre3nderscreen.json").read_bytes(),
+            (self.runtime / "payload/defaults/fre3nderscreen.json").read_bytes(),
+        )
+
+    def test_legacy_symlink_is_rejected(self):
+        source = self.root / "source.json"
+        source.write_text("{}\n")
+        self.legacy.symlink_to(source)
+        self.assertNotEqual(self.action("install").returncode, 0)
+        self.assertFalse((self.data / "fre3nderscreen.json").exists())
 
     def test_stale_pid_does_not_kill_another_process(self):
         unrelated = subprocess.Popen(["sleep", "30"])

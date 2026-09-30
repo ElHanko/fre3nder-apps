@@ -46,8 +46,11 @@ manifest's package version must then match the artifact's source release.
 
 The selected display manager provides API 1 and required framebuffer and
 touch paths. The unprivileged service passes these and optional backlight and
-beeper paths to Fre3nderScreen. On install, update, or restore it copies the
-packaged default config only if no app config exists. App data, logs, and PID
+beeper paths to Fre3nderScreen. On first setup it copies a regular, non-symlink
+legacy config from
+`/home/fre3nder/.fre3nder/fre3nderscreen/fre3nderscreen.json` if present;
+otherwise it copies the packaged default. An existing app config always wins,
+and the legacy file remains available for rollback. App data, logs, and PID
 remain in `$FRE3NDER_APP_DATA_DIR`; hardware discovery and permissions remain
 in Fre3nder.
 
