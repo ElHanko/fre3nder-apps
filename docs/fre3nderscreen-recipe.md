@@ -21,11 +21,23 @@ and source artifact manifest unchanged into the ignored
 recipe keeps no duplicate license texts; `licenses/UPSTREAM` holds recipe
 provenance notes. The importer rejects an existing payload.
 
-Development artifacts are not intended for publication, and there is no
-development `.fre3app` packaging policy yet. A development artifact must not be
-paired with the release `manifest.toml.in` or its `release_serial = 1`. The generic
-`scripts/build-fre3app` is a separate, signing package step; no package has
-been built or signed for this recipe.
+After `scripts/prepare-fre3nderscreen --develop --artifact <artifact-app-dir>`
+imports a development artifact, a separately authorized development package
+build uses:
+
+```sh
+scripts/build-fre3app apps/fre3nderscreen --key <signing-key> \
+  --develop --version 2026.1.14cd415-fre3nder.0.<recipe-commit>
+```
+
+The supplied version identifies both
+the Fre3nderScreen source commit (`14cd415`) and the fre3nder-apps recipe
+commit (`<recipe-commit>`), meaning the committed recipe state used to build
+the package. Development packages use `release_serial = 0`, the same
+publisher and signing key as releases, and are not intended for publication.
+The generic builder does not resolve commits or read the artifact manifest;
+the caller supplies the version. `manifest.toml.in` remains the release
+template, with its version and serial unchanged on disk.
 
 The development cross-build resolves remote `main`; it does not read a local
 Fre3nderScreen worktree. Before the first release app build, update the approved

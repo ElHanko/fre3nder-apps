@@ -76,6 +76,76 @@ class DisplayManifestTests(unittest.TestCase):
                     self.render(display, autostart)
 
 
+class DevelopmentManifestPolicyTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.source = pathlib.Path(self.temp.name)
+        self.template = (DUMMY / "manifest.toml.in").read_text()
+        (self.source / "manifest.toml.in").write_text(self.template)
+        self.render_manifest = runpy.run_path(str(BUILDER))["render_manifest"]
+        self.fingerprint = "a" * 64
+
+    def test_release_template_remains_unchanged(self):
+        rendered = self.render_manifest(self.source, self.fingerprint).decode()
+        self.assertEqual(rendered, self.template.replace("@PUBLISHER_FINGERPRINT@", self.fingerprint))
+        self.assertEqual(tomllib.loads(rendered)["app"]["release_serial"], 1)
+
+    def test_invalid_mode_combinations(self):
+        version = "2026.1.14cd415-fre3nder.0.fd679a9"
+        with self.assertRaisesRegex(ValueError, "--version requires --develop"):
+            self.render_manifest(self.source, self.fingerprint, version=version)
+        with self.assertRaisesRegex(ValueError, "requires a valid --version"):
+            self.render_manifest(self.source, self.fingerprint, develop=True)
+
+    def test_development_manifest_changes_only_app_version_and_serial(self):
+        version = "2026.1.14cd415-fre3nder.0.fd679a9"
+        rendered = self.render_manifest(self.source, self.fingerprint, develop=True, version=version)
+        manifest = tomllib.loads(rendered.decode())
+        release = tomllib.loads(self.render_manifest(self.source, self.fingerprint).decode())
+        self.assertEqual(manifest["app"]["version"], version)
+        self.assertEqual(manifest["app"]["release_serial"], 0)
+
+        development_app = dict(manifest["app"])
+        release_app = dict(release["app"])
+        development_app.pop("version")
+        development_app.pop("release_serial")
+        release_app.pop("version")
+        release_app.pop("release_serial")
+        self.assertEqual(development_app, release_app)
+
+        self.assertEqual({k: v for k, v in manifest.items() if k != "app"},
+                         {k: v for k, v in release.items() if k != "app"})
+        self.assertEqual((self.source / "manifest.toml.in").read_text(), self.template)
+
+    def test_development_version_requires_marker_and_length_limit(self):
+        for version in ("2026.1.14cd415", "", "x-fre3nder.0." + "a" * 128):
+            with self.subTest(version=version):
+                with self.assertRaisesRegex(ValueError, "valid --version"):
+                    self.render_manifest(self.source, self.fingerprint, develop=True, version=version)
+
+    def test_normal_build_rejects_template_serial_zero(self):
+        (self.source / "manifest.toml.in").write_text(
+            self.template.replace("release_serial = 1", "release_serial = 0")
+        )
+        with self.assertRaisesRegex(ValueError, "manifest release_serial is invalid"):
+            self.render_manifest(self.source, self.fingerprint)
+
+    def test_development_requires_unambiguous_app_fields(self):
+        for text in (
+            self.template.replace("[app]", "[app]\n[app]"),
+            self.template.replace("version = \"1.0.0-fre3nder.1\"", ""),
+            self.template.replace("release_serial = 1", ""),
+        ):
+            with self.subTest(text=text):
+                (self.source / "manifest.toml.in").write_text(text)
+                with self.assertRaises(ValueError):
+                    self.render_manifest(
+                        self.source, self.fingerprint, develop=True,
+                        version="2026.1.14cd415-fre3nder.0.fd679a9",
+                    )
+
+
 class BuildFre3AppTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
