@@ -2,8 +2,8 @@ format = 1
 
 [app]
 name = "fre3nderscreen"
-version = "2026.1.1-fre3nder.1"
-release_serial = 1
+version = "2026.2-fre3nder.2"
+release_serial = 2
 
 [publisher]
 id = "fre3nder-official"

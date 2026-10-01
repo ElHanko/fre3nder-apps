@@ -10,6 +10,12 @@ records its own files and checksums; no Fre3nderScreen RootFS component overlay
 is produced.
 Fre3nder owns the Buildroot toolchain, cross-build, and ELF/ABI checks.
 
+The prepared release source is `2026.2` at
+`63e7ecb9fff980b53f4987ef9994675aecf9e0a2`. The release template specifies
+`2026.2-fre3nder.2`, with `release_serial = 2`, continuing the increasing
+package release sequence. No tag, release binary, or signed release package
+has been produced for this preparation.
+
 `scripts/prepare-fre3nderscreen --artifact <fre3nder-artifact-app-dir>`
 imports only release artifacts. Add `--develop` to import only development
 artifacts explicitly; there is no automatic mode detection. The flag changes
@@ -21,9 +27,14 @@ and source artifact manifest unchanged into the ignored
 recipe keeps no duplicate license texts; `licenses/UPSTREAM` holds recipe
 provenance notes. The importer rejects an existing payload.
 
-After `scripts/prepare-fre3nderscreen --develop --artifact <artifact-app-dir>`
-imports a development artifact, a separately authorized development package
-build uses:
+Both the cross-builder and importer retain `YEAR.SERIES` for development:
+`2026.1.1` becomes `2026.1.<source-commit>`, and `2026.2` becomes
+`2026.2.<source-commit>`, using the first seven commit characters.
+
+For the historical `2026.1` development example below, after
+`scripts/prepare-fre3nderscreen --develop --artifact <artifact-app-dir>`
+imports a matching development artifact, a separately authorized package build
+uses:
 
 ```sh
 scripts/build-fre3app apps/fre3nderscreen --key <signing-key> \
@@ -43,18 +54,20 @@ The development package `2026.1.14cd415-fre3nder.0.4796448` (`release_serial = 0
 built from Fre3nderScreen source `14cd41599f1ee8dec659b282e54762fd61552c5a`
 and fre3nder-apps commit `4796448`, was installed and selected through the
 Fre3nder factory-app path on the reference printer. Its display, touch,
-calibration, Moonraker connection, and beeper passed hardware validation. This
-development qualification does not change the separate release recipe pin
-`2026.1.1` in `manifest.toml.in`.
+calibration, Moonraker connection, and beeper passed hardware validation. The
+prepared `2026.2` source retains that application code, patches, and submodules;
+only `README.md` and `DEVELOPMENT.md` changed after `14cd415`. This historical
+qualification does not establish hardware qualification of the unbuilt
+`2026.2` release binary or package.
 
 The signed package is supplied to the Fre3nder RootFS build as a factory seed.
 On a fresh persistent system, Fre3nder installs it through the package core
 and explicitly selects it as the display frontend.
 
 The development cross-build resolves remote `main`; it does not read a local
-Fre3nderScreen worktree. Before the first release app build, update the approved
-Fre3nder release pin after the source commit is published and qualified. The app
-manifest's package version must then match the artifact's source release.
+Fre3nderScreen worktree. A release app build must import an artifact built from
+the approved Fre3nder release pin. The app manifest's package version must
+match the artifact's source release.
 
 The selected display manager provides API 1 and required framebuffer and
 touch paths. The unprivileged service passes these and optional backlight and

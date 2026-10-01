@@ -63,7 +63,9 @@ def validate(artifact, develop=False):
         raise ValueError("app artifact identity, mode, source, or ABI is invalid")
     package = tomllib.loads((RECIPE / "manifest.toml.in").read_text())
     package_version = package["app"]["version"]
-    release_series = package_version.split("-fre3nder.", 1)[0].rsplit(".", 1)[0]
+    release_series = package_version.split("-fre3nder.", 1)[0]
+    if release_series.count(".") >= 2:
+        release_series = release_series.rsplit(".", 1)[0]
     if (not isinstance(source.get("release"), str)
             or (develop and source["release"] != f"{release_series}.{source['commit'][:7]}")
             or (not develop and not package_version.startswith(source["release"] + "-fre3nder."))):
