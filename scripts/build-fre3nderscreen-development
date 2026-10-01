@@ -1,0 +1,80 @@
+#!/bin/sh
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P) || exit 1
+caller_dir=$(pwd -P)
+artifact=
+key=
+
+fail() {
+    printf 'build-fre3nderscreen-development: %s\n' "$*" >&2
+    exit 1
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --artifact)
+            [ "$#" -ge 2 ] && [ -z "$artifact" ] || fail "--artifact requires one path"
+            artifact=$2
+            shift 2
+            ;;
+        --key)
+            [ "$#" -ge 2 ] && [ -z "$key" ] || fail "--key requires one path"
+            key=$2
+            shift 2
+            ;;
+        *) fail "unknown option: $1" ;;
+    esac
+done
+
+[ -n "$artifact" ] || fail "--artifact is required"
+[ -n "$key" ] || fail "--key is required"
+case "$artifact" in /*) ;; *) artifact=$caller_dir/$artifact ;; esac
+case "$key" in /*) ;; *) key=$caller_dir/$key ;; esac
+
+recipe=$root/apps/fre3nderscreen
+payload=$root/apps/fre3nderscreen/payload
+for directory in "$root/scripts" "$root/apps" "$recipe"; do
+    [ -d "$directory" ] && [ ! -L "$directory" ] || fail "unsafe repository directory: $directory"
+done
+[ -f "$recipe/manifest.toml.in" ] && [ ! -L "$recipe/manifest.toml.in" ] \
+    || fail "missing regular Fre3nderScreen recipe manifest"
+[ -x "$root/scripts/prepare-fre3nderscreen" ] && [ -x "$root/scripts/build-fre3app" ] \
+    || fail "missing importer or package builder"
+git -C "$root" diff --quiet -- && git -C "$root" diff --cached --quiet -- \
+    || fail "fre3nder-apps has tracked worktree changes"
+apps_commit=$(git -C "$root" rev-parse --short=7 HEAD)
+[ -n "$apps_commit" ] || fail "missing fre3nder-apps commit identity"
+[ ! -L "$payload" ] || fail "payload must not be a symlink"
+if [ -e "$payload" ]; then
+    [ -d "$payload" ] || fail "payload exists but is not a directory"
+    rm -rf -- "$root/apps/fre3nderscreen/payload"
+fi
+
+cd "$root"
+"$root/scripts/prepare-fre3nderscreen" --develop --artifact "$artifact"
+# The importer has validated this provenance; use its development release unchanged.
+source_release=$(python3 - "$payload/artifact-manifest.json" <<'PYTHON'
+import json
+import sys
+from pathlib import Path
+
+print(json.loads(Path(sys.argv[1]).read_text())["source"]["release"])
+PYTHON
+)
+version="$source_release-fre3nder.0.$apps_commit"
+package=$("$root/scripts/build-fre3app" "$recipe" --key "$key" --develop --version "$version")
+[ -n "$package" ] || fail "package builder returned no path"
+case "$package" in
+    *'
+'*) fail "package builder returned multiple lines" ;;
+esac
+case "$package" in /*) ;; *) package=$root/$package ;; esac
+[ -f "$package" ] && [ ! -L "$package" ] || fail "package is not a regular non-symlink file: $package"
+sha256=$(sha256sum < "$package")
+sha256=${sha256%% *}
+
+printf '\n=== Fre3nderScreen development package: PASS ===\n'
+printf 'Artifact: %s\n' "$artifact"
+printf 'Package:  %s\n' "$package"
+printf 'SHA256:   %s\n' "$sha256"

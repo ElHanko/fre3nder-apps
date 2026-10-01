@@ -45,6 +45,25 @@ Both the cross-builder and importer retain `YEAR.SERIES` for development:
 `2026.1.1` becomes `2026.1.<source-commit>`, and `2026.2` becomes
 `2026.2.<source-commit>`, using the first seven commit characters.
 
+The development package command is separately authorized and explicitly named:
+
+```sh
+scripts/build-fre3nderscreen-development \
+  --artifact <development-artifact-app-dir> --key <private-ed25519-key>
+```
+
+It uses the same controlled generated-payload cleanup, calls
+`prepare-fre3nderscreen --develop` (development artifacts only), and calls
+`build-fre3app --develop --version ...`. The version is
+`<artifact.source.release>-fre3nder.0.<apps-commit>`: the importer-validated
+source release is used unchanged, and the apps identity comes from
+`git rev-parse --short=7 HEAD`. Tracked staged/unstaged changes block the wrapper;
+untracked/ignored generated payload and dist files do not. The generic builder
+sets `release_serial = 0`; the release template is unchanged. Success returns
+one absolute regular non-symlink package path and SHA256 in a development PASS
+block. Errors produce no PASS. This wrapper does not cross-build, generate keys,
+copy a Factory seed, or deploy. The release wrapper remains release-only.
+
 For the historical `2026.1` development example below, after
 `scripts/prepare-fre3nderscreen --develop --artifact <artifact-app-dir>`
 imports a matching development artifact, a separately authorized package build
