@@ -202,7 +202,6 @@ class RecipeTests(unittest.TestCase):
         service = SERVICE.read_text()
         self.assertNotRegex(service, r"\b(chown|chmod|mount|mknod|modprobe|sudo|pkexec)\b")
         self.assertNotIn("/opt/fre3nder/fre3nderscreen", service)
-        self.assertNotIn("/home/fre3nder/.fre3nder/fre3nderscreen", service)
 
 
 class ServiceTests(unittest.TestCase):

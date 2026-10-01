@@ -4,10 +4,10 @@
 `fre3nder/scripts/build-x2000-fre3nderscreen` uses that pin in release mode;
 `--develop` fetches the current remote `main` and records the resolved commit.
 The same cross-build qualifies the binary, themes, and license texts together
-and produces the existing RootFS component overlay and the neutral
-`local/production/artifacts/x2000/fre3nderscreen/app/` artifact.
-The app artifact records its own files and checksums; importing it does not
-require the legacy RootFS overlay archive.
+and produces the neutral `local/production/artifacts/x2000/fre3nderscreen/app/`
+artifact. The app artifact
+records its own files and checksums; no Fre3nderScreen RootFS component overlay
+is produced.
 Fre3nder owns the Buildroot toolchain, cross-build, and ELF/ABI checks.
 
 `scripts/prepare-fre3nderscreen --artifact <fre3nder-artifact-app-dir>`
@@ -38,6 +38,18 @@ publisher and signing key as releases, and are not intended for publication.
 The generic builder does not resolve commits or read the artifact manifest;
 the caller supplies the version. `manifest.toml.in` remains the release
 template, with its version and serial unchanged on disk.
+
+The development package `2026.1.14cd415-fre3nder.0.4796448` (`release_serial = 0`),
+built from Fre3nderScreen source `14cd41599f1ee8dec659b282e54762fd61552c5a`
+and fre3nder-apps commit `4796448`, was installed and selected through the
+Fre3nder factory-app path on the reference printer. Its display, touch,
+calibration, Moonraker connection, and beeper passed hardware validation. This
+development qualification does not change the separate release recipe pin
+`2026.1.1` in `manifest.toml.in`.
+
+The signed package is supplied to the Fre3nder RootFS build as a factory seed.
+On a fresh persistent system, Fre3nder installs it through the package core
+and explicitly selects it as the display frontend.
 
 The development cross-build resolves remote `main`; it does not read a local
 Fre3nderScreen worktree. Before the first release app build, update the approved
