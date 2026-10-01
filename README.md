@@ -53,6 +53,22 @@ information are recorded in `apps/fluidd/upstream.json` and
 `apps/fluidd/licenses/UPSTREAM`. The package carries the GPL version 3 text in
 `apps/fluidd/licenses/LICENSE.fluidd`.
 
+## Fre3nderScreen
+
+Build the release package from an existing neutral Fre3nder X2000 app artifact
+and an existing Ed25519 key:
+
+```sh
+scripts/build-fre3nderscreen-release \
+  --artifact <fre3nder-app-artifact-dir> --key <signing-key>
+```
+
+The wrapper replaces only the generated Fre3nderScreen payload, calls the
+release importer and generic package builder, and reports the resulting package
+path and SHA-256. It performs no cross-build or deployment. The underlying
+`prepare-fre3nderscreen` and `build-fre3app` commands are described in the
+[recipe documentation](docs/fre3nderscreen-recipe.md).
+
 ## OctoApp
 
 OctoApp is packaged as an isolated autostart application. Fre3nder does not run

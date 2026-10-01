@@ -16,7 +16,21 @@ The prepared release source is `2026.2` at
 package release sequence. No tag, release binary, or signed release package
 has been produced for this preparation.
 
-`scripts/prepare-fre3nderscreen --artifact <fre3nder-artifact-app-dir>`
+The normal release package command is:
+
+```sh
+scripts/build-fre3nderscreen-release \
+  --artifact <fre3nder-app-artifact-dir> --key <private-ed25519-key>
+```
+
+The wrapper requires both paths and accepts only release artifacts. It removes
+only the generated `apps/fre3nderscreen/payload/`, rejecting symlinked directory
+boundaries and unexpected payload files. It then calls `prepare-fre3nderscreen`
+without `--develop` and `build-fre3app` with the supplied key. Import or package
+errors stop the wrapper. On success it reports the builder's package path and
+SHA-256 in a PASS block. It does not cross-build, copy a factory seed, or deploy.
+
+The underlying `scripts/prepare-fre3nderscreen --artifact <fre3nder-artifact-app-dir>`
 imports only release artifacts. Add `--develop` to import only development
 artifacts explicitly; there is no automatic mode detection. The flag changes
 only the import policy and performs no build. The importer validates the
