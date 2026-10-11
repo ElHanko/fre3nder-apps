@@ -41,8 +41,10 @@ done
     || fail "missing regular Fre3nderScreen recipe manifest"
 [ -x "$root/scripts/prepare-fre3nderscreen" ] && [ -x "$root/scripts/build-fre3app" ] \
     || fail "missing importer or package builder"
-git -C "$root" diff --quiet -- && git -C "$root" diff --cached --quiet -- \
-    || fail "fre3nder-apps has tracked worktree changes"
+apps_worktree=clean
+if ! git -C "$root" diff --quiet -- || ! git -C "$root" diff --cached --quiet --; then
+    apps_worktree=dirty
+fi
 apps_commit=$(git -C "$root" rev-parse --short=7 HEAD)
 [ -n "$apps_commit" ] || fail "missing fre3nder-apps commit identity"
 [ ! -L "$payload" ] || fail "payload must not be a symlink"
@@ -75,6 +77,7 @@ sha256=$(sha256sum < "$package")
 sha256=${sha256%% *}
 
 printf '\n=== Fre3nderScreen development package: PASS ===\n'
+printf 'Recipe worktree: %s\n' "$apps_worktree"
 printf 'Artifact: %s\n' "$artifact"
 printf 'Package:  %s\n' "$package"
 printf 'SHA256:   %s\n' "$sha256"

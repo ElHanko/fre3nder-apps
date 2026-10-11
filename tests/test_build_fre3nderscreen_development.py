@@ -156,16 +156,14 @@ class DevelopmentWrapperTests(unittest.TestCase):
                 self.assertNotEqual(self.run_wrapper(args).returncode, 0)
                 self.assertEqual(self.calls(), [])
 
-    def test_tracked_dirty_stops_before_cleanup_and_import(self):
-        self.payload.mkdir()
-        (self.payload / "keep").write_text("old payload")
+    def test_tracked_dirty_recipe_is_explicitly_reported_in_development(self):
         for state in ("staged", "unstaged"):
             with self.subTest(state=state):
+                self.log.unlink(missing_ok=True)
                 result = self.run_wrapper(FIXTURE_DIRTY=state)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn("tracked worktree changes", result.stderr)
-                self.assertEqual(self.calls(), [])
-                self.assertEqual((self.payload / "keep").read_text(), "old payload")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("Recipe worktree: dirty", result.stdout)
+                self.assertEqual(len(self.calls()), 2)
 
     def test_untracked_output_and_existing_payload_are_allowed(self):
         (self.repo / "untracked.fixture").write_text("untracked")
