@@ -10,6 +10,13 @@ building signed `.fre3app` artifacts.
 - Do not publish GitHub Releases unless explicitly authorized.
 - Do not generate or rotate signing keys from this repository.
 - Never commit private keys, tokens, credentials, or other secrets.
+- Never commit private IP or MAC addresses, device identifiers, SSH aliases,
+  local usernames, or personal file paths.
+- Local, device-specific information belongs exclusively in
+  `docs/local-device.md`. This file stays local and is ignored by Git.
+- Public documentation must use generic placeholders.
+- Do not store credentials, passwords, tokens, or private keys, even in
+  `docs/local-device.md`.
 - Finished `.fre3app` artifacts belong in `dist/` locally and GitHub Releases
   when published; they are not committed to Git.
 - Package sources must be reproducible from tracked repository inputs plus an
@@ -38,3 +45,4 @@ At minimum:
 4. review the complete diff
 5. scan for secrets/private keys
 6. verify third-party provenance and licensing
+7. verify that `docs/local-device.md` is ignored by Git and is not in the index
