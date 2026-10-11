@@ -9,6 +9,7 @@ themes=$runtime/payload/themes
 defaults=$runtime/payload/defaults/fre3nderscreen.json
 config=$data/fre3nderscreen.json
 legacy_config=${FRE3NDERSCREEN_LEGACY_CONFIG:-/home/fre3nder/.fre3nder/fre3nderscreen/fre3nderscreen.json}
+ready_file=$data/fre3nderscreen.ready
 pid_file=$data/fre3nderscreen.pid
 log=$data/logs/service.log
 
@@ -62,7 +63,7 @@ stop_screen() {
             kill -KILL "$pid"
         fi
     fi
-    rm -f -- "$pid_file"
+    rm -f -- "$pid_file" "$ready_file"
 }
 
 case "${1:-}" in
@@ -91,7 +92,9 @@ start)
         echo 'fre3nderscreen: config must not be a symlink' >&2
         exit 1
     }
-    rm -f -- "$pid_file"
+    rm -f -- "$pid_file" "$ready_file"
+    export FRE3NDERSCREEN_VT="${FRE3NDER_DISPLAY_VT:?display VT is required}"
+    export FRE3NDERSCREEN_READY_FILE="$ready_file"
     export FRE3NDERSCREEN_FRAMEBUFFER="$FRE3NDER_DISPLAY_FRAMEBUFFER"
     export FRE3NDERSCREEN_INPUT="$FRE3NDER_DISPLAY_INPUT"
     export FRE3NDERSCREEN_BACKLIGHT_POWER="${FRE3NDER_DISPLAY_BACKLIGHT_POWER:-}"
@@ -100,7 +103,25 @@ start)
     export FRE3NDERSCREEN_THEME_DIR="$themes"
     cd "$data"
     "$binary" </dev/null >>"$log" 2>&1 &
-    printf '%s\n' "$!" > "$pid_file"
+    started_pid=$!
+    printf '%s\n' "$started_pid" > "$pid_file"
+    tries=0
+    # /proc identity may still belong to the launching shell before exec.
+    # Liveness keeps this startup window open; readiness still requires identity.
+    while kill -0 "$started_pid" 2>/dev/null && [ "$tries" -lt 100 ]; do
+        if running && [ -f "$ready_file" ] && [ ! -L "$ready_file" ]; then
+            exit 0
+        fi
+        sleep 0.1
+        tries=$((tries + 1))
+    done
+    if running; then
+        echo 'fre3nderscreen: VT readiness timed out' >&2
+    else
+        echo 'fre3nderscreen: app process exited before readiness' >&2
+    fi
+    stop_screen
+    exit 1
     ;;
 stop|uninstall)
     stop_screen

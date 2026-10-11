@@ -276,31 +276,88 @@ class ServiceTests(unittest.TestCase):
                 import time
 
                 data = Path(os.environ["FRE3NDER_APP_DATA_DIR"])
+                (data / "mock.pid").write_text(str(os.getpid()))
                 names = (
                     "FRE3NDERSCREEN_FRAMEBUFFER", "FRE3NDERSCREEN_INPUT",
                     "FRE3NDERSCREEN_BACKLIGHT_POWER", "FRE3NDERSCREEN_BEEPER_INPUT",
                     "FRE3NDERSCREEN_CONFIG", "FRE3NDERSCREEN_THEME_DIR",
+                    "FRE3NDERSCREEN_VT", "FRE3NDERSCREEN_READY_FILE",
                 )
                 with (data / "starts.jsonl").open("a") as output:
                     output.write(json.dumps({name: os.environ.get(name) for name in names}) + "\\n")
+                if os.environ.get("FIXTURE_FAIL_START"):
+                    sys.exit(1)
+                time.sleep(float(os.environ.get("FIXTURE_READY_DELAY", "0")))
+                if not os.environ.get("FIXTURE_NEVER_READY"):
+                    Path(os.environ["FRE3NDERSCREEN_READY_FILE"]).write_text("1")
                 signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
                 while True:
                     time.sleep(0.1)
             """)
         )
         binary.chmod(0o755)
+        self.service = SERVICE
         self.env = dict(
             os.environ,
             FRE3NDER_APP_RUNTIME_DIR=str(self.runtime),
             FRE3NDER_APP_DATA_DIR=str(self.data),
             FRE3NDERSCREEN_LEGACY_CONFIG=str(self.legacy),
             FRE3NDER_DISPLAY_API="1",
+            FRE3NDER_DISPLAY_VT="/test/tty7",
             FRE3NDER_DISPLAY_FRAMEBUFFER="/test/fb",
             FRE3NDER_DISPLAY_INPUT="/test/input",
             FRE3NDER_DISPLAY_BACKLIGHT_POWER="",
             FRE3NDER_DISPLAY_BEEPER="",
         )
         self.addCleanup(self.cleanup_process)
+
+    def test_failed_vt_start_leaves_no_pid_or_ready_marker(self):
+        result = self.action("start", dict(self.env, FIXTURE_FAIL_START="1"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("app process exited before readiness", result.stderr)
+        self.assertFalse((self.data / "fre3nderscreen.pid").exists())
+        self.assertFalse((self.data / "fre3nderscreen.ready").exists())
+
+    def test_waits_for_process_identity_after_delayed_exec(self):
+        # Keep the actual forked child in the launch shell before exec.
+        self.service = self.root / "service"
+        source = SERVICE.read_text().replace(
+            '    "$binary" </dev/null >>"$log" 2>&1 &',
+            '    launch() { sleep 0.2; exec "$binary"; }\n'
+            '    launch </dev/null >>"$log" 2>&1 &',
+        ).replace(
+            '    tries=0\n',
+            '    cp "$pid_file" "$data/launched.pid"\n    tries=0\n',
+        )
+        self.service.write_text(source)
+        self.service.chmod(0o755)
+        result = self.action("start")
+        self.wait_for_start()
+        # Retain cleanup on the old implementation, which discards the PID.
+        pid_file = self.data / "fre3nderscreen.pid"
+        if not pid_file.exists():
+            pid_file.write_text((self.data / "launched.pid").read_text())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.action("status").returncode, 0)
+        self.assertEqual(self.action("stop").returncode, 0)
+        self.assertFalse(pid_file.exists())
+        self.assertFalse((self.data / "fre3nderscreen.ready").exists())
+
+    def test_waits_for_delayed_vt_readiness(self):
+        result = self.action("start", dict(self.env, FIXTURE_READY_DELAY="0.2"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.data / "fre3nderscreen.ready").is_file())
+        self.assertEqual(self.action("status").returncode, 0)
+
+    def test_vt_readiness_timeout_stops_process_and_removes_markers(self):
+        result = self.action("start", dict(self.env, FIXTURE_NEVER_READY="1"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("VT readiness timed out", result.stderr)
+        pid = int((self.data / "mock.pid").read_text())
+        self.assertFalse(Path(f"/proc/{pid}/exe").exists(), "app process survived timeout")
+        self.assertEqual(self.action("status").returncode, 1)
+        self.assertFalse((self.data / "fre3nderscreen.pid").exists())
+        self.assertFalse((self.data / "fre3nderscreen.ready").exists())
 
     def cleanup_process(self):
         pid_file = self.data / "fre3nderscreen.pid"
@@ -309,7 +366,7 @@ class ServiceTests(unittest.TestCase):
 
     def action(self, name, env=None):
         return subprocess.run(
-            [str(SERVICE), name], env=env or self.env, capture_output=True, text=True
+            [str(self.service), name], env=env or self.env, capture_output=True, text=True
         )
 
     def wait_for_start(self):
@@ -330,6 +387,8 @@ class ServiceTests(unittest.TestCase):
         values = (self.data / "starts.jsonl").read_text().splitlines()
         self.assertEqual(len(values), 1)
         passed = json.loads(values[0])
+        self.assertEqual(passed["FRE3NDERSCREEN_VT"], "/test/tty7")
+        self.assertEqual(passed["FRE3NDERSCREEN_READY_FILE"], str(self.data / "fre3nderscreen.ready"))
         self.assertEqual(passed["FRE3NDERSCREEN_FRAMEBUFFER"], "/test/fb")
         self.assertEqual(passed["FRE3NDERSCREEN_INPUT"], "/test/input")
         self.assertEqual(passed["FRE3NDERSCREEN_BACKLIGHT_POWER"], "")
