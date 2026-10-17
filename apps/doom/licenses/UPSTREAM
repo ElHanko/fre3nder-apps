@@ -1,0 +1,15 @@
+DoomGeneric and original Doom-derived code:
+  https://github.com/ozkl/doomgeneric
+  Pinned commit: e257a09527062bfb986b6e5e0780839b6cbd5b71
+  License: GNU GPL version 2 or later (see upstream LICENSE).
+
+Locally built packages contain the GPL-covered executable, upstream source,
+Fre3nder-specific backend source, and upstream license text. Source is also
+retrievable from the pinned public repository. Fre3nder-derived integration code
+is distributed under GPL-2.0-or-later insofar as it is based on DoomGeneric.
+
+Original Doom, Doom II, TNT, and Plutonia IWADs remain proprietary game data.
+They are never part of this public recipe repository. An individual may choose
+to include legally obtained IWADs in a private, locally signed package using
+--with-wads; --without-wads excludes them. Packages containing proprietary WADs
+are not published by this project and must not be redistributed without rights.

@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""Locally build Doom Fre3app from pinned DoomGeneric sources.
+
+Only the recipe is published. Choose whether to bundle private IWAD files.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import tomllib
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+APP = ROOT / "apps/doom"
+IWAD_NAMES = ("DOOM.WAD", "DOOM2.WAD", "TNT.WAD", "PLUTONIA.WAD")
+
+
+def run(*args: str, cwd: pathlib.Path | None = None) -> str:
+    result = subprocess.run(args, cwd=cwd, check=True, text=True,
+                            stdout=subprocess.PIPE)
+    return result.stdout.strip()
+
+
+def ensure_git_ignore() -> None:
+    probe = APP / "local/iwads/DOOM.WAD"
+    status = subprocess.run(
+        ["git", "check-ignore", "-q", str(probe)], cwd=ROOT,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if status.returncode:
+        raise ValueError("apps/doom/local/ must be gitignored before the build")
+
+
+def upstream_info() -> dict:
+    info = json.loads((APP / "upstream.json").read_text(encoding="utf-8"))
+    commit = info.get("commit", "")
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise ValueError("invalid pinned DoomGeneric commit")
+    if info.get("repository") != "https://github.com/ozkl/doomgeneric.git":
+        raise ValueError("unexpected upstream repository")
+    return info
+
+
+def obtain_source(repo: pathlib.Path, info: dict) -> pathlib.Path:
+    """Pinned checkout is cached only under ignored local/, never shipped."""
+    commit = info["commit"]
+    if not (repo / ".git").is_dir():
+        if repo.exists():
+            raise ValueError(f"upstream checkout path exists but is not Git: {repo}")
+        run("git", "clone", "--no-checkout", info["repository"], str(repo))
+    current = run("git", "rev-parse", "HEAD", cwd=repo)
+    if current != commit:
+        run("git", "fetch", "--depth=1", "origin", commit, cwd=repo)
+    # Clone uses --no-checkout: HEAD may already match the pin even though
+    # the worktree is still empty. Always populate/check out the pinned tree.
+    run("git", "checkout", "--detach", commit, cwd=repo)
+    if run("git", "rev-parse", "HEAD", cwd=repo) != commit:
+        raise ValueError("upstream commit mismatch")
+    dirty = run("git", "status", "--porcelain", cwd=repo)
+    if dirty:
+        raise ValueError(f"upstream checkout must be clean:\n{dirty}")
+    src = repo / info["source_subdirectory"]
+    if not (src / "Makefile.linuxvt").is_file() or not (repo / "LICENSE").is_file():
+        raise ValueError("pinned upstream source structure changed")
+    return src
+
+
+def replace_backend(makefile: pathlib.Path) -> str:
+    content = makefile.read_text(encoding="utf-8")
+    match = re.search(r"^SRC_DOOM\s*=\s*(.+)$", content, re.MULTILINE)
+    if not match:
+        raise ValueError("upstream source inventory missing")
+    objects = match.group(1).split()
+    if objects.count("doomgeneric_linuxvt.o") != 1:
+        raise ValueError("expected one Linux VT backend in upstream inventory")
+    return " ".join("doomgeneric_fre3nder.o" if obj == "doomgeneric_linuxvt.o" else obj
+                    for obj in objects)
+
+
+def stage_private_iwads(iwads: pathlib.Path, stage: pathlib.Path) -> list[str]:
+    """Copy only known private IWADs into local package staging."""
+    if not iwads.is_dir() or iwads.is_symlink():
+        raise ValueError("--with-wads requires apps/doom/local/iwads/")
+    copied: list[str] = []
+    for name in IWAD_NAMES:
+        wad = iwads / name
+        if not wad.exists() and not wad.is_symlink():
+            continue
+        if wad.is_symlink() or not wad.is_file():
+            raise ValueError(f"IWAD must be a regular non-symlink file: {wad}")
+        # Check the standard IWAD header, not just a .WAD extension.
+        with wad.open("rb") as file:
+            if file.read(4) != b"IWAD":
+                raise ValueError(f"not an IWAD file: {wad}")
+        dest = stage / "payload/iwads"
+        dest.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(wad, dest / name)
+        copied.append(name)
+    if not copied:
+        raise ValueError("--with-wads selected, but no supported IWADs found")
+    return copied
+
+
+def stage_package(source: pathlib.Path, stage: pathlib.Path, *, with_wads: bool) -> str:
+    """Explicit allowlist: private WADs enter only with --with-wads."""
+    (stage / "payload/bin").mkdir(parents=True)
+    (stage / "licenses").mkdir()
+    (stage / "source/doomgeneric").mkdir(parents=True)
+    for name in ("manifest.toml.in", "service", "upstream.json"):
+        shutil.copy2(APP / name, stage / name)
+    shutil.copy2(APP / "licenses/UPSTREAM", stage / "licenses/UPSTREAM")
+    shutil.copy2(source.parent / "LICENSE", stage / "licenses/LICENSE.doomgeneric")
+    for file in sorted(source.iterdir()):
+        if file.is_symlink():
+            raise ValueError(f"upstream symlink rejected: {file}")
+        if file.is_file() and (file.suffix in (".c", ".h") or file.name == "Makefile.linuxvt"):
+            shutil.copy2(file, stage / "source/doomgeneric" / file.name)
+    # Add our version-controlled backend to the source bundle for GPL compliance.
+    shutil.copy2(APP / "src/doomgeneric_fre3nder.c",
+                 stage / "source/doomgeneric/doomgeneric_fre3nder.c")
+    if with_wads:
+        stage_private_iwads(APP / "local/iwads", stage)
+    return replace_backend(stage / "source/doomgeneric/Makefile.linuxvt")
+
+
+def development_version() -> str:
+    manifest = tomllib.loads((APP / "manifest.toml.in").read_text(encoding="utf-8"))
+    release = manifest["app"]["version"]
+    base, sep, _ = release.partition("-fre3nder.")
+    if not sep or not base:
+        raise ValueError("cannot determine development version from manifest")
+    return f"{base}-fre3nder.0.1"
+
+
+def package_command(stage: pathlib.Path, key: pathlib.Path,
+                    output: pathlib.Path | None, develop: bool,
+                    version: str | None, *, with_wads: bool) -> list[str]:
+    cmd = [str(ROOT / "scripts/build-fre3app"), str(stage),
+           "--key", str(key.resolve())]
+    if develop:
+        cmd.extend(["--develop", "--version", version or development_version()])
+    elif version is not None:
+        raise ValueError("--version requires --develop")
+    if output is None:
+        release = tomllib.loads((APP / "manifest.toml.in").read_text(encoding="utf-8"))
+        package_version = (version or development_version()) if develop else release["app"]["version"]
+        flavor = "with-wads" if with_wads else "without-wads"
+        output = ROOT / "dist" / f"doom-{package_version}-{flavor}-x2000.fre3app"
+    cmd.extend(["--output", str(output.resolve())])
+    return cmd
+
+
+def check_binary(binary: pathlib.Path, readelf: pathlib.Path) -> None:
+    header = run(str(readelf), "-h", str(binary))
+    for expected in ("ELF32", "little endian", "MIPS"):
+        if expected not in header:
+            raise ValueError(f"Doom binary is not X2000 MIPS ELF: {expected}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--buildroot-output", type=pathlib.Path,
+                        default=ROOT / "../fre3nder/local/production/work/x2000/buildroot-output-fre3nder")
+    parser.add_argument("--key", type=pathlib.Path,
+                        default=ROOT / "../fre3nder/local/production/keys/apps/private.pem")
+    parser.add_argument("--output", type=pathlib.Path)
+    parser.add_argument("--develop", action="store_true",
+                        help="sign a development package with release_serial=0")
+    parser.add_argument("--version", help="explicit development version")
+    wads = parser.add_mutually_exclusive_group(required=True)
+    wads.add_argument("--with-wads", action="store_true",
+                      help="bundle locally provided original IWADs (private package only)")
+    wads.add_argument("--without-wads", action="store_true",
+                      help="build engine only; supply IWADs on the printer")
+    args = parser.parse_args()
+    try:
+        if args.version is not None and not args.develop:
+            raise ValueError("--version requires --develop")
+        ensure_git_ignore()
+        info = upstream_info()
+        local = APP / "local"
+        local.mkdir(parents=True, exist_ok=True)
+        if local.is_symlink():
+            raise ValueError("local must not be a symlink")
+        buildroot = args.buildroot_output.resolve()
+        cc = buildroot / "host/bin/mipsel-buildroot-linux-gnu-gcc"
+        readelf = buildroot / "host/bin/mipsel-buildroot-linux-gnu-readelf"
+        for tool in (cc, readelf):
+            if not tool.is_file():
+                raise ValueError(f"missing Buildroot cross-tool: {tool}")
+        if not args.key.is_file():
+            raise ValueError(f"signing key missing: {args.key}")
+        upstream = obtain_source(local / "upstream", info)
+        with tempfile.TemporaryDirectory(prefix="doom-build-", dir=local) as temp:
+            temp = pathlib.Path(temp)
+            stage = temp / "package"
+            stage.mkdir()
+            inventory = stage_package(upstream, stage, with_wads=args.with_wads)
+            source_dir = stage / "source/doomgeneric"
+            binary = stage / "payload/bin/doom"
+            run("make", "-C", str(source_dir), "-f", "Makefile.linuxvt",
+                f"CC={cc}", f"OBJDIR={temp / 'objects'}", f"OUTPUT={binary}",
+                "SRC_DOOM=" + inventory,
+                "CFLAGS=-Os -Wall -DNORMALUNIX -DLINUX -DSNDSERV -D_DEFAULT_SOURCE "
+                       "-DDOOMGENERIC_RESX=320 -DDOOMGENERIC_RESY=200",
+                "LDFLAGS=-Wl,--gc-sections", "LIBS=-lm -lc")
+            if not binary.is_file():
+                raise ValueError("cross-compiler did not produce Doom binary")
+            check_binary(binary, readelf)
+            command = package_command(stage, args.key, args.output,
+                                      args.develop, args.version,
+                                      with_wads=args.with_wads)
+            package = run(*command, cwd=ROOT)
+            print(f"Package: {package}")
+            print("Signed local Doom Fre3app built; " +
+                  ("private IWADs bundled (do not publish)." if args.with_wads else
+                   "no IWADs included."))
+        return 0
+    except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+        print(f"build-doom: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

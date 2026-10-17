@@ -6,3 +6,5 @@
 /apps/fre3nderscreen/payload/
 __pycache__/
 *.py[cod]
+
+/apps/doom/local/

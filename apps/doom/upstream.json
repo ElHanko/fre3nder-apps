@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "project": "DoomGeneric",
+  "repository": "https://github.com/ozkl/doomgeneric.git",
+  "commit": "e257a09527062bfb986b6e5e0780839b6cbd5b71",
+  "license": "GPL-2.0-or-later",
+  "source_subdirectory": "doomgeneric"
+}

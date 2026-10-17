@@ -1,0 +1,118 @@
+#!/bin/sh
+set -eu
+umask 077
+
+runtime=${FRE3NDER_APP_RUNTIME_DIR:?}
+data=${FRE3NDER_APP_DATA_DIR:?}
+binary=$runtime/payload/bin/doom
+pid_file=$data/doom.pid
+log=$data/doom.log
+selected=$data/selected-iwad
+
+prepare() {
+    [ ! -L "$data" ] && [ ! -L "$data/iwads" ] || return 1
+    mkdir -p "$data/iwads"
+}
+
+running() {
+    [ -f "$pid_file" ] && [ ! -L "$pid_file" ] || return 1
+    pid=$(cat "$pid_file")
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$pid" -gt 1 ] && [ -r "/proc/$pid/environ" ] || return 1
+    tr '\000' '\n' < "/proc/$pid/environ" | grep -Fxq "FRE3NDER_APP_DATA_DIR=$data" || return 1
+    [ "$(readlink "/proc/$pid/exe" 2>/dev/null)" = "$binary" ]
+}
+
+stop_app() {
+    if running; then
+        kill -TERM "$pid"
+        tries=0
+        while running && [ "$tries" -lt 50 ]; do
+            sleep 0.1
+            tries=$((tries + 1))
+        done
+        if running; then
+            kill -KILL "$pid"
+        fi
+    fi
+    # Never use a stale/untrusted PID to signal an unrelated process.
+    rm -f -- "$pid_file"
+}
+
+get_iwad() {
+    name=DOOM.WAD
+    if [ -e "$selected" ] || [ -L "$selected" ]; then
+        [ -f "$selected" ] && [ ! -L "$selected" ] || return 1
+        name=$(cat "$selected")
+    fi
+    case "$name" in
+        DOOM.WAD|DOOM2.WAD|TNT.WAD|PLUTONIA.WAD) ;;
+        *) echo 'doom: selected-iwad must contain an allowed filename' >&2; return 1 ;;
+    esac
+    private_iwad=$data/iwads/$name
+    bundled_iwad=$runtime/payload/iwads/$name
+    if [ -e "$private_iwad" ] || [ -L "$private_iwad" ]; then
+        [ -f "$private_iwad" ] && [ ! -L "$private_iwad" ] &&
+            [ -r "$private_iwad" ] || {
+            echo "doom: invalid private IWAD: $private_iwad" >&2
+            return 1
+        }
+        iwad=$private_iwad
+    elif [ -f "$bundled_iwad" ] && [ ! -L "$bundled_iwad" ] &&
+         [ -r "$bundled_iwad" ]; then
+        iwad=$bundled_iwad
+    else
+        echo "doom: missing readable IWAD: $name (app data or bundled payload)" >&2
+        return 1
+    fi
+}
+
+case "${1:-}" in
+    install|update|restore)
+        prepare
+        ;;
+    start)
+        [ "${FRE3NDER_DISPLAY_API:-}" = 1 ] || {
+            echo 'doom: Display Frontend API v1 required' >&2
+            exit 1
+        }
+        [ -n "${FRE3NDER_DISPLAY_VT:-}" ] &&
+            [ -n "${FRE3NDER_DISPLAY_FRAMEBUFFER:-}" ] &&
+            [ -n "${FRE3NDER_DISPLAY_INPUT:-}" ] || {
+            echo 'doom: display environment is incomplete' >&2
+            exit 1
+        }
+        [ -x "$binary" ] || { echo 'doom: binary missing' >&2; exit 1; }
+        if running; then exit 0; fi
+        prepare
+        get_iwad
+        rm -f -- "$pid_file"
+        cd "$data"
+        HOME="$data" XDG_CONFIG_HOME="$data" "$binary" -iwad "$iwad" -nosound -scaling 1 </dev/null >>"$log" 2>&1 &
+        pid=$!
+        printf '%s\n' "$pid" > "$pid_file"
+        tries=0
+        while kill -0 "$pid" 2>/dev/null && [ "$tries" -lt 50 ]; do
+            if running; then exit 0; fi
+            sleep 0.1
+            tries=$((tries + 1))
+        done
+        echo 'doom: process did not start cleanly' >&2
+        stop_app
+        exit 1
+        ;;
+    stop)
+        stop_app
+        ;;
+    status)
+        running
+        ;;
+    uninstall)
+        stop_app
+        # Preserve privately supplied WADs, settings and saved games.
+        ;;
+    *)
+        echo 'usage: service {install|update|restore|start|stop|status|uninstall}' >&2
+        exit 2
+        ;;
+esac
