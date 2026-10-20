@@ -15,7 +15,7 @@ arch = "mipsel"
 
 [runtime]
 service = "service"
-autostart = true
+autostart = false
 
 [signature]
 algorithm = "Ed25519"

@@ -1,9 +1,8 @@
 # Moonraker `.fre3app` migration scaffold
 
-This is a **source-only migration preparation**, not an approved system-image
-seed. In particular, the native Python dependencies are still supplied by the
-current Buildroot root filesystem. Do not replace `S61fre3nder-moonraker`
-before integration tests and on-printer qualification.
+This package is the signed system-app seed after the host and X2000
+qualification gates. In particular, the native Python dependencies are still supplied by the
+current Buildroot root filesystem. S61 now prepares printer data and delegates service ownership to Package-Core.
 
 ## Ownership
 
@@ -12,7 +11,7 @@ before integration tests and on-printer qualification.
 * Persistent Moonraker configuration / logs / database / G-code:
   `/home/fre3nder/printer_data/` (never deleted by app updates)
 * Runtime: Package-Core-selected `apps-v2/moonraker/` directory
-* Service autostart: Package-Core's existing `S65` lifecycle, after Klipper
+* Service startup: platform S61 via Package-Core after Klipper (autostart=false)
 
 ## Migration sequence
 

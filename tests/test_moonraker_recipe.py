@@ -45,7 +45,7 @@ class MoonrakerRecipeTests(unittest.TestCase):
             "platform": "fre3nder-x2000", "arch": "mipsel"
         })
         self.assertEqual(manifest["runtime"], {
-            "service": "service", "autostart": True
+            "service": "service", "autostart": False
         })
         self.assertEqual(manifest["signature"]["algorithm"], "Ed25519")
 
