@@ -1,30 +1,53 @@
-# Moonraker `.fre3app` migration scaffold
+# Moonraker system `.fre3app`
 
-This package is the signed system-app seed after the host and X2000
-qualification gates. In particular, the native Python dependencies are still supplied by the
-current Buildroot root filesystem. S61 now prepares printer data and delegates service ownership to Package-Core.
+Moonraker runs as an official signed system app on Fre3nder. Its source pin,
+universal wheels, packaging and unprivileged service belong to this repository.
+The X2000 reference system has run this package with Klipper and Moonraker
+reporting `active` and Package-Core confirming the running official system app.
+Native Python dependencies and libraries remain supplied by the Buildroot
+platform.
 
-## Ownership
+## Preparing the payload
 
-* App source pin: `apps/moonraker/upstream.json`
-* Universal wheels lock: `apps/moonraker/python-wheels.json`
-* Persistent Moonraker configuration / logs / database / G-code:
-  `/home/fre3nder/printer_data/` (never deleted by app updates)
-* Runtime: Package-Core-selected `apps-v2/moonraker/` directory
-* Service startup: platform S61 via Package-Core after Klipper (autostart=false)
+`apps/moonraker/upstream.json` pins the upstream source and license;
+`apps/moonraker/python-wheels.json` records exact wheel versions, filenames,
+SHA256 hashes, upstream URLs and licenses. Supply a clean Git checkout at that
+source commit and a directory containing the locked wheels:
 
-## Migration sequence
+```sh
+scripts/prepare-moonraker --source <moonraker-checkout> --wheels <wheel-cache>
+```
 
-1. Stage and verify the upstream source and universal dependencies using a
-   separate `prepare-moonraker` tool in `fre3nder-apps` (to be implemented).
-2. Build a **development-only** signed package using
-   `scripts/build-fre3app apps/moonraker --key ... --develop    --version 0.0.0-fre3nder.0.<commit>`. This is not a release.
-3. Validate imports, existing configuration, Klipper API socket, readiness,
-   upgrade and rollback on the X2000 reference machine.
-4. Make the Fre3nder image consume an explicitly signed Moonraker seed from
-   `FRE3NDER_SYSTEM_APP_PACKAGES_DIR`, remove legacy RootFS Moonraker payload,
-   and retire the conflicting S61 daemon start while retaining config seeding.
-5. Confirm SYS reset, HOME preservation, new OTA and OTA rollback end to end.
+The preparer works offline, verifies the source commit and wheel hashes, and
+stages `apps/moonraker/payload/` with source, Python modules and provenance.
+It excludes Git metadata and Python caches and refuses to overwrite an existing
+payload. Bundled source and wheels retain their upstream license texts.
 
-The image-seed directory is not a repository download endpoint. System-app
-updates continue to use package-core release_serial and signatures.
+## Packaging and image integration
+
+Use `scripts/build-fre3app apps/moonraker --key <official-app-key>` for a
+release recipe with a positive, increasing `release_serial`. For a development
+snapshot, use `--develop --version <unique-development-version>`; its serial
+is zero. The checked-in bootstrap template is a development recipe until
+release metadata is assigned. Building or signing requires explicit operator
+authorization.
+
+Supply the resulting official signed package as `moonraker.fre3app` in the
+platform's `FRE3NDER_SYSTEM_APP_PACKAGES_DIR`. A release image requires
+`release_serial >= 1`; a development image also accepts serial zero. The
+platform verifies the package, embeds it in the image, and reconciles it at boot.
+This directory is an image input, not a package download endpoint.
+
+## Runtime ownership
+
+Package-Core installs and selects the `apps-v2/moonraker/` runtime and invokes
+its service as the unprivileged `fre3nder` user. Platform S61 prepares the
+configuration and runtime directory, checks Klipper, and starts Moonraker via
+Package-Core after S58 app recovery and S59/S60 Klipper startup.
+`autostart = false` keeps S65 from starting it independently.
+
+The app service owns its PID, start/stop/status and API-socket readiness.
+Package-Core restarts an already running service after a manual app update and
+restores the previous runtime on failure. Configuration, logs, database and
+G-code remain in `/home/fre3nder/printer_data/`; package updates do not delete
+that state. There is no on-device pip or Git updater for this signed runtime.

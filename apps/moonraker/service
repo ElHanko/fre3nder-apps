@@ -1,5 +1,5 @@
 #!/bin/sh
-# Moonraker experimental fre3app service. Keep printer_data under existing HOME.
+# Unprivileged Moonraker service. Keep printer_data under existing HOME.
 set -eu
 umask 077
 runtime=${FRE3NDER_APP_RUNTIME_DIR:?}
@@ -9,8 +9,6 @@ printer_data=${FRE3NDER_PRINTER_DATA_DIR:-$home/printer_data}
 config=$printer_data/config/moonraker.conf
 log=$printer_data/logs/moonraker.log
 uds=${FRE3NDER_MOONRAKER_RUNTIME:-/run/fre3nder-moonraker}/moonraker.sock
-klipper_runtime=${FRE3NDER_KLIPPER_RUNTIME:-/run/fre3nder-klipper}
-klipper_sock=${FRE3NDER_KLIPPER_API_SOCKET:-$klipper_runtime/klippy.sock}
 source=$runtime/payload/source
 python_dir=$runtime/payload/python
 entrypoint=$source/moonraker/moonraker.py
@@ -56,10 +54,6 @@ start_app() {
         echo 'moonraker: platform configuration is unavailable' >&2; return 1;
     }
     [ -d "$printer_data/logs" ] && [ ! -L "$printer_data/logs" ] || return 1
-    [ -r "$klipper_runtime/status" ] && [ "$(cat "$klipper_runtime/status")" = active ] &&
-        [ -S "$klipper_sock" ] || {
-        echo 'moonraker: Klipper is not ready' >&2; return 1;
-    }
     if running; then
         [ -S "$uds" ] && return 0
         echo 'moonraker: process is alive but API socket is unavailable' >&2

@@ -17,7 +17,6 @@ import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 RECIPE = ROOT / "apps/moonraker"
-DEFAULT_FRE3NDER = ROOT.parent / "fre3nder"
 
 
 def fail(message):
@@ -138,10 +137,8 @@ def prepare(source, wheels, output):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source', type=pathlib.Path,
-        default=DEFAULT_FRE3NDER / 'local/production/work/x2000/moonraker-source')
-    parser.add_argument('--wheels', type=pathlib.Path,
-        default=DEFAULT_FRE3NDER / 'local/production/work/x2000/moonraker-python-wheels')
+    parser.add_argument('--source', type=pathlib.Path, required=True)
+    parser.add_argument('--wheels', type=pathlib.Path, required=True)
     parser.add_argument('--output', type=pathlib.Path, default=RECIPE / 'payload')
     args = parser.parse_args()
     try:

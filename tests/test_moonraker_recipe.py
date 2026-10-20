@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Offline host-side checks for the Moonraker fre3app migration recipe.
+"""Offline host-side checks for the Moonraker system fre3app recipe.
 
-Copy to fre3nder-apps/tests/test_moonraker_recipe.py and run with unittest.
 No device access, signing keys, network or root privileges required.
 """
 from __future__ import annotations
@@ -36,10 +35,10 @@ class MoonrakerRecipeTests(unittest.TestCase):
     def setUpClass(cls):
         cls.mod = module_from(PREPARE)
 
-    def test_manifest_is_development_only_and_matches_existing_contract(self):
+    def test_manifest_matches_system_app_contract(self):
         manifest = tomllib.loads((RECIPE / "manifest.toml.in").read_text())
         self.assertEqual(manifest["app"]["name"], "moonraker")
-        self.assertEqual(manifest["app"]["release_serial"], 0)
+        self.assertGreaterEqual(manifest["app"]["release_serial"], 0)
         self.assertEqual(manifest["publisher"]["id"], "fre3nder-official")
         self.assertEqual(manifest["target"], {
             "platform": "fre3nder-x2000", "arch": "mipsel"
@@ -73,7 +72,6 @@ class MoonrakerRecipeTests(unittest.TestCase):
         self.assertIn("FRE3NDER_APP_DATA_DIR", script)
         self.assertIn("$home/printer_data", script)
         self.assertIn("/run/fre3nder-moonraker", script)
-        self.assertIn("/run/fre3nder-klipper", script)
         self.assertIn("-u \"$uds\"", script)
         self.assertIn("status) running", script)
         for forbidden in ("pip install", "git clone", "apt install", "systemctl"):
