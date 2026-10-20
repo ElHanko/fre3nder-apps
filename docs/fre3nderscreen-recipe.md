@@ -1,119 +1,149 @@
 # Fre3nderScreen display app recipe
 
+Fre3nderScreen owns the UI application and SDL simulator. Fre3nder owns the
+Buildroot toolchain, platform integration and X2000 cross-build. This repository
+imports the neutral app artifact and packages/signs the `.fre3app`.
+
+## Source and artifact contract
+
 `fre3nder/configs/x2000/sources.json` is the sole production source pin.
-`fre3nder/scripts/build-x2000-fre3nderscreen` uses that pin in release mode;
-`--develop` fetches the current remote `main` and records the resolved commit.
-The same cross-build qualifies the binary, themes, and license texts together
-and produces the neutral `local/production/artifacts/x2000/fre3nderscreen/app/`
-artifact. The app artifact
-records its own files and checksums; no Fre3nderScreen RootFS component overlay
-is produced.
-Fre3nder owns the Buildroot toolchain, cross-build, and ELF/ABI checks.
+`fre3nder/scripts/build-x2000-fre3nderscreen` fetches that exact commit in release
+mode, verifies the submodule pins, applies the three Screen-owned dependency
+patches, and checks the statically linked MIPS32r2 hardfloat ELF/ABI.
+It produces `local/production/artifacts/x2000/fre3nderscreen/app/`, with:
 
-The prepared release source is `2026.2` at
-`63e7ecb9fff980b53f4987ef9994675aecf9e0a2`. The release template specifies
-`2026.2-fre3nder.2`, with `release_serial = 2`, continuing the increasing
-package release sequence. No tag, release binary, or signed release package
-has been produced for this preparation.
+- `bin/fre3nderscreen` and six themes (blue, green, pink, purple, red, yellow);
+- seven license texts: `COPYING`, `LVGL-LICENSE`, `LV-DRIVERS-LICENSE`,
+  `LIBHV-LICENSE`, `SPDLOG-LICENSE`, `DEJAVU-FONTS-LICENSE`,
+  `MATERIAL-DESIGN-ICONS-LICENSE`;
+- `artifact-manifest.json` with source/submodule/build provenance and file hashes;
+- `SHA256SUMS` covering all artifact files including that manifest.
 
-The normal release package command is:
+The cleaned Screen source no longer contains the inherited WPA control code.
+`WPA-SUPPLICANT-LICENSE` is outside the new app contract. Fre3nder's independent
+Buildroot `wpa_supplicant` service remains part of Core. Old artifacts and
+existing generated payloads retain their original notices; rebuild/re-import
+for the new contract rather than editing old artifact manifests or checksums.
+
+The importer validates the exact file set, mode, source release, ABI, submodule
+provenance, manifest hashes and `SHA256SUMS`. Unexpected files, symlinks and
+unsupported members remain errors. It copies the verified binary, themes,
+license bytes and artifact manifest unchanged into ignored
+`apps/fre3nderscreen/payload/`, adding the packaged default config. It rejects
+an existing output directory. There is no automatic release/development mode
+selection and no fallback to an old file set.
+
+## Release package
+
+The template remains `2026.2-fre3nder.2`, `release_serial = 2`. Release serials
+must be positive and increase for subsequent releases. No version or serial
+change is needed for this pre-release cleanup. Development packages use serial
+`0`; Core requires explicit `--allow-downgrade` to replace an installed release
+with one of them. Packaging does not install or downgrade any app.
+
+After explicit build/signing approval, from this repository:
 
 ```sh
 scripts/build-fre3nderscreen-release \
   --artifact <fre3nder-app-artifact-dir> --key <private-ed25519-key>
 ```
 
-The wrapper requires both paths and accepts only release artifacts. It removes
-only the generated `apps/fre3nderscreen/payload/`, rejecting symlinked directory
-boundaries and unexpected payload files. It then calls `prepare-fre3nderscreen`
-without `--develop` and `build-fre3app` with the supplied key. Import or package
-errors stop the wrapper. On success it reports the builder's package path and
-SHA-256 in a PASS block. It does not cross-build, copy a factory seed, or deploy.
+The wrapper accepts release artifacts only. It replaces only the generated
+payload, rejecting symlinked recipe boundaries and a non-directory payload,
+then calls `prepare-fre3nderscreen` and `build-fre3app`. Errors stop the wrapper;
+success reports the package path and SHA-256. It performs no cross-build,
+Factory-seed copy or deployment. Use an existing key; do not generate one for
+this integration.
 
-The underlying `scripts/prepare-fre3nderscreen --artifact <fre3nder-artifact-app-dir>`
-imports only release artifacts. Add `--develop` to import only development
-artifacts explicitly; there is no automatic mode detection. The flag changes
-only the import policy and performs no build. The importer validates the
-existing app artifact's mode, source and submodule license provenance, ABI,
-file set and checksums. It copies the binary, six themes, eight license texts,
-and source artifact manifest unchanged into the ignored
-`apps/fre3nderscreen/payload/`, alongside the packaged default config. The
-recipe keeps no duplicate license texts; `licenses/UPSTREAM` holds recipe
-provenance notes. The importer rejects an existing payload.
+For the combined cross-build, signing and local Factory-seed preparation,
+run the existing wrapper from Fre3nder after its separate build/signing approval:
 
-Both the cross-builder and importer retain `YEAR.SERIES` for development:
-`2026.1.1` becomes `2026.1.<source-commit>`, and `2026.2` becomes
-`2026.2.<source-commit>`, using the first seven commit characters.
+```sh
+scripts/build-x2000-fre3nderscreen-release \
+  --apps-repo <fre3nder-apps-root> --key <private-ed25519-key>
+```
 
-The development package command is separately authorized and explicitly named:
+This requires the prepared Fre3nder Buildroot host toolchain, fetchable pinned
+Screen source and a clean tracked fre3nder-apps worktree, staged and unstaged.
+It runs the cross-builder and this repository's release wrapper, then copies
+the identical package atomically to Fre3nder's
+`local/production/factory-apps/fre3nderscreen.fre3app`. It does not build a RootFS
+or deploy. The standalone apps wrapper does not itself enforce a clean worktree;
+do not use it to bypass the combined release workflow's check. The Fre3nder
+worktree status and build-input hash are recorded in the artifact; use reviewed,
+committed inputs for a reproducible release.
+
+## Development snapshots
+
+The cross-builder's `--develop` uses remote `main`, recording the resolved
+commit. For a local worktree, explicitly set
+`FRE3NDER_FRE3NDERSCREEN_SOURCE=../fre3nderscreen` in Fre3nder and use
+`scripts/build-x2000-fre3nderscreen --develop`. The read-only checkout is copied
+into isolated build work, including pending edits/new files/deletions and clean
+initialized submodules. The source records baseline commit, local origin,
+worktree status and content hash. Without that variable, pending changes in the
+conventional sibling Screen checkout block the remote-main development path.
+Release mode never substitutes a local worktree or `main` for the pin.
+
+The separately authorized development package command is:
 
 ```sh
 scripts/build-fre3nderscreen-development \
   --artifact <development-artifact-app-dir> --key <private-ed25519-key>
 ```
 
-It uses the same controlled generated-payload cleanup, calls
-`prepare-fre3nderscreen --develop` (development artifacts only), and calls
-`build-fre3app --develop --version ...`. The version is
-`<artifact.source.release>-fre3nder.0.<apps-commit>`: the importer-validated
-source release is used unchanged, and the apps identity comes from
-`git rev-parse --short=7 HEAD`. Tracked staged/unstaged changes block the wrapper;
-untracked/ignored generated payload and dist files do not. The generic builder
-sets `release_serial = 0`; the release template is unchanged. Success returns
-one absolute regular non-symlink package path and SHA256 in a development PASS
-block. Errors produce no PASS. This wrapper does not cross-build, generate keys,
-copy a Factory seed, or deploy. The release wrapper remains release-only.
+It uses `prepare-fre3nderscreen --develop` and
+`build-fre3app --develop --version ...`, producing
+`<artifact.source.release>-fre3nder.0.<apps-commit>`, serial `0`.
+`artifact.source.release` is `YEAR.SERIES.<screen-commit>` (seven commit
+characters); for example, `2026.2.<screen-commit>`. The template stays unchanged.
+The wrapper allows tracked recipe changes but reports `Recipe worktree: dirty`.
+Commit-based version strings do not identify pending changes; inspect the source
+worktree hash and package checksum as well. This path does not copy a Factory
+seed or deploy, and never imports a release artifact as development or vice versa.
 
-For the historical `2026.1` development example below, after
-`scripts/prepare-fre3nderscreen --develop --artifact <artifact-app-dir>`
-imports a matching development artifact, a separately authorized package build
-uses:
+For non-signing import validation, `scripts/prepare-fre3nderscreen --develop
+--artifact <artifact-app-dir> --output <unused-temporary-directory>` validates
+and copies an existing Development artifact only; it performs no build.
 
-```sh
-scripts/build-fre3app apps/fre3nderscreen --key <signing-key> \
-  --develop --version 2026.1.14cd415-fre3nder.0.<recipe-commit>
-```
+## Remaining 2026.2 release steps
 
-The supplied version identifies both
-the Fre3nderScreen source commit (`14cd415`) and the fre3nder-apps recipe
-commit (`<recipe-commit>`), meaning the committed recipe state used to build
-the package. Development packages use `release_serial = 0`, the same
-publisher and signing key as releases, and are not intended for publication.
-The generic builder does not resolve commits or read the artifact manifest;
-the caller supplies the version. `manifest.toml.in` remains the release
-template, with its version and serial unchanged on disk.
+The current Fre3nder source pin remains
+`63e7ecb9fff980b53f4987ef9994675aecf9e0a2`; it predates native management and
+cleanup. The final commit does not yet exist. Separately approve/commit the
+cleanup, make it fetchable, and explicitly update the Fre3nder pin, its matching
+test assertion and provenance documentation before the release build. Commit the
+matching apps integration when authorized so the combined wrapper's clean-tree
+check passes. Do not bypass that check or invent a replacement commit hash.
 
-The development package `2026.1.14cd415-fre3nder.0.4796448` (`release_serial = 0`),
-built from Fre3nderScreen source `14cd41599f1ee8dec659b282e54762fd61552c5a`
-and fre3nder-apps commit `4796448`, was installed and selected through the
-Fre3nder factory-app path on the reference printer. Its display, touch,
-calibration, Moonraker connection, and beeper passed hardware validation. The
-prepared `2026.2` source retains that application code, patches, and submodules;
-only `README.md` and `DEVELOPMENT.md` changed after `14cd415`. This historical
-qualification does not establish hardware qualification of the unbuilt
-`2026.2` release binary or package.
+The existing local and remote Screen tag `2026.2` also points to `63e7ecb`.
+It must remain untouched until a separate decision authorizes correcting it;
+choosing a new version instead requires consistent source/package version changes.
+Build the pinned app, sign/package it, verify the Factory seed, then separately
+authorize on-device installation and regression testing. Publication requires
+separate tag/push/release approval.
 
-The signed package is supplied to the Fre3nder RootFS build as a factory seed.
-On a fresh persistent system, Fre3nder installs it through the package core
-and explicitly selects it as the display frontend.
+The operator reports X2000 hardware tests with Fre3nder 2026.5 and Screen
+`65b37b9`: unprivileged `fre3nder` startup with primary GID
+`fre3nder-management`, protected root-owned runtime, native System and Apps
+(including writes), and complete OTA through backup, readback, activation and
+restart. The subsequent cleanup passed Docker/SDL build and manual UI testing
+according to the operator. Neither result qualifies the future release binary
+or every UI function. Earlier Factory-app tests remain historical evidence.
 
-The development cross-build resolves remote `main`; it does not read a local
-Fre3nderScreen worktree. A release app build must import an artifact built from
-the approved Fre3nder release pin. The app manifest's package version must
-match the artifact's source release.
+## Runtime and provenance
 
-The selected display manager provides API 1 and required framebuffer and
-touch paths. The unprivileged service passes these and optional backlight and
-beeper paths to Fre3nderScreen. On first setup it copies a regular, non-symlink
-legacy config from
-`/home/fre3nder/.fre3nder/fre3nderscreen/fre3nderscreen.json` if present;
-otherwise it copies the packaged default. An existing app config always wins,
-and the legacy file remains available for rollback. App data, logs, and PID
-remain in `$FRE3NDER_APP_DATA_DIR`; hardware discovery and permissions remain
-in Fre3nder.
+Fre3nder installs/selects the signed Factory seed on a fresh persistent system;
+it does not automatically replace an already installed app. The display manager
+provides API 1, VT, framebuffer and touch paths; the unprivileged package service
+passes them and optional backlight/beeper paths to Screen. App data, logs and PID
+remain in `$FRE3NDER_APP_DATA_DIR`. An existing app config wins; first setup can
+copy a regular non-symlink legacy config from
+`/home/fre3nder/.fre3nder/fre3nderscreen/fre3nderscreen.json` or use the packaged
+defaults. Device discovery, permissions and privileged management belong to Core.
 
-Fre3nderScreen is GPL-3.0-only. LVGL, lv_drivers, and spdlog use MIT;
-libhv and the inherited wpa_supplicant control client use BSD-3-Clause.
-DejaVu and Material Design Icons notices are retained in `payload/licenses/`.
-The exact imported commits and artifact checksums travel in the signed
-`payload/artifact-manifest.json`.
+Fre3nderScreen retains its Guppy Screen history and GPL-3.0-only provenance.
+LVGL, lv_drivers and spdlog use MIT; libhv uses BSD-3-Clause. DejaVu and Material
+Design Icons notices remain in `payload/licenses/`. Exact imported source,
+submodule commits and artifact checksums travel in the signed
+`payload/artifact-manifest.json`. See `apps/fre3nderscreen/licenses/UPSTREAM`.

@@ -5,10 +5,14 @@ release, commit, submodule commits, and Fre3nder build identity.
 Fre3nderScreen is derived from Guppy Screen. Its source history and copyright
 notices remain in the source. COPYING is Fre3nderScreen's GPL version 3
 text. The build applies Fre3nderScreen's source-owned submodule patches.
-LVGL, lv_drivers, and spdlog are MIT licensed; libhv and the inherited
-wpa_supplicant control client are BSD-3-Clause licensed. Their license texts
-are imported byte-for-byte from the qualified Fre3nder artifact into
+LVGL, lv_drivers, and spdlog are MIT licensed; libhv is BSD-3-Clause
+licensed. Their license texts are imported byte-for-byte from the qualified
+Fre3nder artifact into
 payload/licenses/. These licenses permit redistribution with their notices.
+
+The cleaned Screen source no longer contains the inherited WPA control
+client. Its license is no longer part of the app artifact or package.
+Fre3nder Core retains its independent Buildroot wpa_supplicant service.
 
 The compiled DejaVu Sans Mono asset was inherited from Guppy Screen; the
 original font version and TTF cannot be reconstructed from this source tree.

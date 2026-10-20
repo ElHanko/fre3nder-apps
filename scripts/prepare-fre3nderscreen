@@ -21,7 +21,6 @@ THEMES = {f"themes/{name}.json" for name in ("blue", "green", "pink", "purple", 
 LICENSES = {
     "COPYING", "DEJAVU-FONTS-LICENSE", "LIBHV-LICENSE", "LV-DRIVERS-LICENSE",
     "LVGL-LICENSE", "MATERIAL-DESIGN-ICONS-LICENSE", "SPDLOG-LICENSE",
-    "WPA-SUPPLICANT-LICENSE",
 }
 SUBMODULE_LICENSES = {"libhv": "BSD-3-Clause", "lv_drivers": "MIT", "lvgl": "MIT", "spdlog": "MIT"}
 FILES = {"bin/fre3nderscreen", *THEMES, *(f"licenses/{name}" for name in LICENSES)}

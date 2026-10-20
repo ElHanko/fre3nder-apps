@@ -61,7 +61,6 @@ class RecipeTests(unittest.TestCase):
                 *(f"licenses/{name}" for name in (
                     "COPYING", "DEJAVU-FONTS-LICENSE", "LIBHV-LICENSE", "LV-DRIVERS-LICENSE",
                     "LVGL-LICENSE", "MATERIAL-DESIGN-ICONS-LICENSE", "SPDLOG-LICENSE",
-                    "WPA-SUPPLICANT-LICENSE",
                 )),
             }
             actual = {path.relative_to(payload).as_posix() for path in payload.rglob("*") if path.is_file()}
@@ -91,7 +90,6 @@ class RecipeTests(unittest.TestCase):
                 for name in (
                     "COPYING", "DEJAVU-FONTS-LICENSE", "LIBHV-LICENSE", "LV-DRIVERS-LICENSE",
                     "LVGL-LICENSE", "MATERIAL-DESIGN-ICONS-LICENSE", "SPDLOG-LICENSE",
-                    "WPA-SUPPLICANT-LICENSE",
                 )
             }
             for name, data in license_bytes.items():
@@ -145,6 +143,17 @@ class RecipeTests(unittest.TestCase):
                 self.assertEqual((payload / "licenses" / name).read_bytes(), data)
             self.assertEqual(import_artifact(payload).returncode, 1)
             rejected = root / "rejected"
+            # Even a checksummed legacy license is outside the reduced contract.
+            legacy_license = "licenses/WPA-SUPPLICANT-LICENSE"
+            (artifact / legacy_license).write_bytes(b"legacy fixture license")
+            files[legacy_license] = hashlib.sha256((artifact / legacy_license).read_bytes()).hexdigest()
+            write_metadata()
+            result = import_artifact(rejected)
+            self.assertIn("file set differs", result.stderr)
+            self.assertFalse(rejected.exists())
+            (artifact / legacy_license).unlink()
+            del files[legacy_license]
+            write_metadata()
             (artifact / "bin/fre3nderscreen").write_bytes(b"corrupted")
             self.assertNotEqual(import_artifact(rejected).returncode, 0)
             self.assertFalse(rejected.exists())
