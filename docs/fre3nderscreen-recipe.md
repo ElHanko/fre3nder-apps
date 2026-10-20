@@ -7,6 +7,8 @@ imports the neutral app artifact and packages/signs the `.fre3app`.
 ## Source and artifact contract
 
 `fre3nder/configs/x2000/sources.json` is the sole production source pin.
+For release `2026.2` it selects the committed cleanup source
+`823d090bc97f9e6b429aebda93f588450b33f40b`; the four submodule pins are unchanged.
 `fre3nder/scripts/build-x2000-fre3nderscreen` fetches that exact commit in release
 mode, verifies the submodule pins, applies the three Screen-owned dependency
 patches, and checks the statically linked MIPS32r2 hardfloat ELF/ABI.
@@ -108,28 +110,36 @@ and copies an existing Development artifact only; it performs no build.
 
 ## Remaining 2026.2 release steps
 
-The current Fre3nder source pin remains
-`63e7ecb9fff980b53f4987ef9994675aecf9e0a2`; it predates native management and
-cleanup. The final commit does not yet exist. Separately approve/commit the
-cleanup, make it fetchable, and explicitly update the Fre3nder pin, its matching
-test assertion and provenance documentation before the release build. Commit the
-matching apps integration when authorized so the combined wrapper's clean-tree
-check passes. Do not bypass that check or invent a replacement commit hash.
+The source cleanup, matching platform cross-builder and apps importer are
+committed and integrated. The Fre3nder release pin selects `823d090`, retaining
+source release `2026.2` and package `2026.2-fre3nder.2`, serial `2`. Use reviewed,
+committed release-preparation changes so the combined wrapper's clean tracked
+apps-worktree check passes. Production release packaging and hardware
+qualification of the final release binary remain pending.
+
+Moonraker's migration to a signed system app does not add a dependency to this
+standalone Screen pipeline. A later Fre3nder RootFS build separately consumes
+the Screen Factory seed and Moonraker system-app seed; a release image requires
+positive release serials for both.
 
 The existing local and remote Screen tag `2026.2` also points to `63e7ecb`.
 It must remain untouched until a separate decision authorizes correcting it;
 choosing a new version instead requires consistent source/package version changes.
-Build the pinned app, sign/package it, verify the Factory seed, then separately
-authorize on-device installation and regression testing. Publication requires
-separate tag/push/release approval.
+Build the pinned app, sign/package it, and verify it offline with Fre3nder
+Package-Core and its immutable official public key. Check version, serial,
+display API, the signed source/submodule/ABI manifest and byte equality/SHA256
+of the Factory seed. Then separately authorize on-device installation and
+regression testing. Publication requires separate tag/push/release approval.
 
 The operator reports X2000 hardware tests with Fre3nder 2026.5 and Screen
 `65b37b9`: unprivileged `fre3nder` startup with primary GID
 `fre3nder-management`, protected root-owned runtime, native System and Apps
 (including writes), and complete OTA through backup, readback, activation and
 restart. The subsequent cleanup passed Docker/SDL build and manual UI testing
-according to the operator. Neither result qualifies the future release binary
-or every UI function. Earlier Factory-app tests remain historical evidence.
+according to the operator, who also reports a successful local X2000
+Development cross-build of the cleaned source. These development results do not
+qualify the final production release binary or every UI function. Earlier
+Factory-app tests remain historical evidence.
 
 ## Runtime and provenance
 
