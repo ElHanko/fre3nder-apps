@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""Stage a pinned offline Moonraker source checkout and SHA256-locked wheels.
+
+No downloads, no system installation, no release signing, no device access.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import pathlib
+import shutil
+import stat
+import subprocess
+import tempfile
+import zipfile
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+RECIPE = ROOT / "apps/moonraker"
+DEFAULT_FRE3NDER = ROOT.parent / "fre3nder"
+
+
+def fail(message):
+    raise ValueError(message)
+
+
+def regular(path):
+    return path.is_file() and not path.is_symlink()
+
+
+def source_pin(source, upstream):
+    if not source.is_dir() or source.is_symlink():
+        fail("Moonraker source must be a real Git checkout")
+    if not (source / '.git').exists():
+        fail("Moonraker Git checkout is missing")
+    commit = subprocess.check_output(
+        ["git", "-C", str(source), "rev-parse", "HEAD"], text=True,
+    ).strip()
+    if commit != upstream["commit"]:
+        fail("Moonraker source HEAD differs from the app recipe pin")
+    status = subprocess.check_output(
+        ["git", "-C", str(source), "status", "--porcelain=v1"], text=True,
+    )
+    if status:
+        fail("Moonraker source checkout is dirty")
+    if not regular(source / "moonraker/moonraker.py"):
+        fail("Moonraker entrypoint is missing")
+
+
+def copy_source(source, destination):
+    destination.mkdir(parents=True)
+    excluded = {'.git', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache'}
+    for entry in sorted(source.rglob('*')):
+        rel = entry.relative_to(source)
+        if any(part in excluded for part in rel.parts) or entry.suffix in ('.pyc', '.pyo'):
+            continue
+        if entry.is_symlink():
+            fail(f"Moonraker source symlink is unsupported: {rel}")
+        if entry.is_dir():
+            (destination / rel).mkdir(parents=True, exist_ok=True)
+        elif entry.is_file():
+            target = destination / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(entry, target)
+            target.chmod(0o644)
+        else:
+            fail(f"unsupported source entry: {rel}")
+
+
+def copy_wheels(wheels, lock, destination):
+    if not wheels.is_dir() or wheels.is_symlink():
+        fail("wheel cache is missing")
+    if lock.get("target") != {
+            "python": "3.12", "platform": "any",
+            "implementation": "py", "abi": "none"}:
+        fail("unexpected Moonraker pure-Python wheel target")
+    destination.mkdir(parents=True)
+    seen = set()
+    for item in lock['wheels']:
+        src = wheels / item['filename']
+        if not regular(src):
+            fail(f"missing regular wheel {src.name}")
+        if hashlib.sha256(src.read_bytes()).hexdigest() != item['sha256']:
+            fail(f"wheel checksum mismatch: {src.name}")
+        if not src.name.endswith('.whl') or '/' in src.name or '\\' in src.name:
+            fail('invalid wheel filename')
+        with zipfile.ZipFile(src) as archive:
+            for member in archive.infolist():
+                name = member.filename
+                rel = pathlib.PurePosixPath(name)
+                if (rel.is_absolute() or not rel.parts or any(
+                        x in ('', '.', '..') for x in rel.parts)
+                        or '\\' in name):
+                    fail(f"unsafe wheel member: {name}")
+                if (member.external_attr >> 16) & 0o170000 == stat.S_IFLNK:
+                    fail(f"wheel symlink: {name}")
+                if '__pycache__' in rel.parts or rel.suffix in ('.pyc', '.pyo'):
+                    continue
+                target = destination.joinpath(*rel.parts)
+                if member.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+                if rel.as_posix() in seen or target.exists():
+                    fail(f"duplicate wheel payload member: {name}")
+                seen.add(rel.as_posix())
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(member) as src_stream, target.open('xb') as dst:
+                    shutil.copyfileobj(src_stream, dst)
+                target.chmod(0o644)
+
+
+def prepare(source, wheels, output):
+    upstream = json.loads((RECIPE / 'upstream.json').read_text())
+    lock = json.loads((RECIPE / 'python-wheels.json').read_text())
+    if upstream.get('python') != '3.12':
+        fail('recipe requires Python 3.12')
+    source_pin(source, upstream)
+    if output.exists() or output.is_symlink():
+        fail('payload already exists; refusing overwrite')
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='.moonraker-payload-', dir=output.parent) as tmp:
+        stage = pathlib.Path(tmp) / 'payload'
+        copy_source(source, stage / 'source')
+        copy_wheels(wheels, lock, stage / 'python')
+        provenance = {
+            'schema': 1, 'source': upstream,
+            'locked_wheels': [{'name': item['name'],
+                               'version': item['version'],
+                               'sha256': item['sha256']}
+                              for item in lock['wheels']],
+        }
+        (stage / 'provenance.json').write_text(
+            json.dumps(provenance, indent=2, sort_keys=True) + '\n',
+            encoding='utf-8',
+        )
+        stage.rename(output)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--source', type=pathlib.Path,
+        default=DEFAULT_FRE3NDER / 'local/production/work/x2000/moonraker-source')
+    parser.add_argument('--wheels', type=pathlib.Path,
+        default=DEFAULT_FRE3NDER / 'local/production/work/x2000/moonraker-python-wheels')
+    parser.add_argument('--output', type=pathlib.Path, default=RECIPE / 'payload')
+    args = parser.parse_args()
+    try:
+        prepare(args.source.resolve(), args.wheels.resolve(), args.output)
+    except (OSError, ValueError, subprocess.CalledProcessError, zipfile.BadZipFile) as exc:
+        parser.exit(1, f'prepare-moonraker: {exc}\n')
+    print(f'PREPARED={args.output}')
+
+if __name__ == '__main__':
+    main()

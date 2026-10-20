@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "project": "moonraker",
+  "repository": "https://github.com/Arksine/moonraker.git",
+  "commit": "9e676eba6b02661a4dfa3ec6e7ac3f3504498e6d",
+  "license": "GPL-3.0-only",
+  "python": "3.12",
+  "build_status": "migration-scaffold; not hardware-qualified"
+}

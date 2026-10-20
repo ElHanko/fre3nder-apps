@@ -1,0 +1,98 @@
+#!/bin/sh
+# Moonraker experimental fre3app service. Keep printer_data under existing HOME.
+set -eu
+umask 077
+runtime=${FRE3NDER_APP_RUNTIME_DIR:?}
+data=${FRE3NDER_APP_DATA_DIR:?}
+home=${FRE3NDER_HOME_DIR:-/home/fre3nder}
+printer_data=${FRE3NDER_PRINTER_DATA_DIR:-$home/printer_data}
+config=$printer_data/config/moonraker.conf
+log=$printer_data/logs/moonraker.log
+uds=${FRE3NDER_MOONRAKER_RUNTIME:-/run/fre3nder-moonraker}/moonraker.sock
+klipper_runtime=${FRE3NDER_KLIPPER_RUNTIME:-/run/fre3nder-klipper}
+klipper_sock=${FRE3NDER_KLIPPER_API_SOCKET:-$klipper_runtime/klippy.sock}
+source=$runtime/payload/source
+python_dir=$runtime/payload/python
+entrypoint=$source/moonraker/moonraker.py
+python=${FRE3NDER_PYTHON:-/usr/bin/python3}
+pid_file=$data/moonraker.pid
+
+running() {
+    [ -f "$pid_file" ] && [ ! -L "$pid_file" ] || return 1
+    pid=$(cat "$pid_file")
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$pid" -gt 1 ] && kill -0 "$pid" 2>/dev/null || return 1
+    [ -r "/proc/$pid/cmdline" ] || return 1
+    tr '\000' '\n' < "/proc/$pid/cmdline" | grep -Fxq -- "$entrypoint" || return 1
+    tr '\000' '\n' < "/proc/$pid/cmdline" | grep -Fxq -- "$printer_data" || return 1
+}
+
+stop_app() {
+    if running; then
+        kill "$pid"
+        tries=0
+        while running && [ "$tries" -lt 10 ]; do
+            sleep 1
+            tries=$((tries + 1))
+        done
+        if running; then
+            kill -KILL "$pid"
+            sleep 1
+            running && return 1
+        fi
+    fi
+    rm -f "$pid_file"
+}
+
+verify_payload() {
+    [ -f "$entrypoint" ] && [ ! -L "$entrypoint" ] || return 1
+    [ -d "$python_dir" ] && [ ! -L "$python_dir" ] || return 1
+    [ -x "$python" ] || return 1
+}
+
+start_app() {
+    verify_payload || { echo 'moonraker: signed payload unavailable' >&2; return 1; }
+    [ -f "$config" ] && [ ! -L "$config" ] || {
+        echo 'moonraker: platform configuration is unavailable' >&2; return 1;
+    }
+    [ -d "$printer_data/logs" ] && [ ! -L "$printer_data/logs" ] || return 1
+    [ -r "$klipper_runtime/status" ] && [ "$(cat "$klipper_runtime/status")" = active ] &&
+        [ -S "$klipper_sock" ] || {
+        echo 'moonraker: Klipper is not ready' >&2; return 1;
+    }
+    if running; then
+        [ -S "$uds" ] && return 0
+        echo 'moonraker: process is alive but API socket is unavailable' >&2
+        return 1
+    fi
+    mkdir -p "$data"
+    rm -f "$pid_file"
+    # No Git updater or pip at device runtime. App updates are signed .fre3app only.
+    export PYTHONPATH="$python_dir:$source"
+    export HOME="$home"
+    export PIP_ONLY_BINARY=:all:
+    start-stop-daemon -S -q -b -m -p "$pid_file" -x "$python" -- \
+        "$entrypoint" -d "$printer_data" -c "$config" -l "$log" -u "$uds" || return 1
+    tries=0
+    while [ "$tries" -lt 30 ]; do
+        if ! running; then
+            rm -f "$pid_file"
+            echo 'moonraker: exited before readiness' >&2
+            return 1
+        fi
+        [ -S "$uds" ] && return 0
+        sleep 1
+        tries=$((tries + 1))
+    done
+    stop_app || true
+    echo 'moonraker: socket readiness timed out' >&2
+    return 1
+}
+
+case "${1:-}" in
+install|update|restore) verify_payload ;;
+start) start_app ;;
+status) running && [ -S "$uds" ] ;;
+stop|uninstall) stop_app ;;
+*) echo 'usage: service {install|update|restore|start|stop|status|uninstall}' >&2; exit 2 ;;
+esac
