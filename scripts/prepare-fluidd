@@ -14,8 +14,22 @@ import urllib.request
 import zipfile
 
 
-SOURCE = Path(__file__).resolve().parents[1] / "apps/fluidd"
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE = ROOT / "apps/fluidd"
+CACHE_DIR = ROOT / "local/fluidd"
 MAX_UNPACKED = 1024 * 1024 * 1024
+
+
+def report(message):
+    print(f"prepare-fluidd: {message}", file=sys.stderr, flush=True)
+
+
+def format_size(size):
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KiB"
+    return f"{size / (1024 * 1024):.1f} MiB"
 
 
 def verify_archive(path, upstream):
@@ -34,6 +48,8 @@ def verify_archive(path, upstream):
 def download(path, upstream):
     request = urllib.request.Request(upstream["asset_url"])
     size = 0
+    next_report = 1024 * 1024
+    expected_size = upstream["asset_size"]
     with urllib.request.urlopen(request, timeout=60) as response, path.open("xb") as output:
         if not response.geturl().startswith("https://"):
             raise ValueError("Fluidd download left HTTPS")
@@ -42,8 +58,32 @@ def download(path, upstream):
             if size > upstream["asset_size"]:
                 raise ValueError("Fluidd download exceeds pinned size")
             output.write(chunk)
+            if size >= next_report:
+                report(f"downloaded {format_size(size)} / {format_size(expected_size)}")
+                next_report += 1024 * 1024
     if size != upstream["asset_size"]:
         raise ValueError("Fluidd download size mismatch")
+
+
+def cached_archive(upstream):
+    if CACHE_DIR.is_symlink() or (CACHE_DIR.exists() and not CACHE_DIR.is_dir()):
+        raise ValueError("Fluidd cache must be a real directory")
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    # Hash in the name keeps old pins distinct when the upstream version changes.
+    filename = f"fluidd-{upstream['version']}-{upstream['asset_sha256'][:12]}.zip"
+    archive = CACHE_DIR / filename
+    if archive.exists() or archive.is_symlink():
+        verify_archive(archive, upstream)
+        report(f"cached archive: {archive.name}, SHA-256 OK")
+        return archive
+    report(f"downloading Fluidd {upstream['version']} ({format_size(upstream['asset_size'])})")
+    with tempfile.TemporaryDirectory(dir=CACHE_DIR, prefix=".fluidd-download-") as tmp:
+        temporary = Path(tmp) / "fluidd.zip"
+        download(temporary, upstream)
+        verify_archive(temporary, upstream)
+        temporary.rename(archive)
+    report("download complete, SHA-256 OK")
+    return archive
 
 
 def extract(archive_path, destination):
@@ -87,6 +127,7 @@ def validate_payload(payload, upstream):
 
 
 def prepare(archive_path, destination, upstream):
+    report("verifying pinned Fluidd archive")
     verify_archive(archive_path, upstream)
     if destination.is_symlink():
         raise ValueError("Fluidd payload destination must not be a symlink")
@@ -95,10 +136,13 @@ def prepare(archive_path, destination, upstream):
         temporary = Path(tmp)
         staged = temporary / "payload"
         staged.mkdir()
+        report("extracting Fluidd payload")
         extract(archive_path, staged)
+        report("checking Fluidd release identity")
         validate_payload(staged, upstream)
         previous = temporary / "previous"
         if destination.exists():
+            report("replacing existing payload")
             os.replace(destination, previous)
         try:
             os.replace(staged, destination)
@@ -113,13 +157,9 @@ def main():
     parser.add_argument("--archive", type=Path, help="use an already downloaded archive")
     args = parser.parse_args()
     upstream = json.loads((SOURCE / "upstream.json").read_text())
-    if args.archive is not None:
-        prepare(args.archive, SOURCE / "payload", upstream)
-        return
-    with tempfile.TemporaryDirectory(prefix="fre3nder-fluidd-") as tmp:
-        archive = Path(tmp) / "fluidd.zip"
-        download(archive, upstream)
-        prepare(archive, SOURCE / "payload", upstream)
+    archive = args.archive if args.archive is not None else cached_archive(upstream)
+    prepare(archive, SOURCE / "payload", upstream)
+    report(f"ready: {SOURCE / 'payload'}")
 
 
 if __name__ == "__main__":
