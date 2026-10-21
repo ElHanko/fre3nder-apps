@@ -114,12 +114,14 @@ def prepare(source, wheels, output):
     if upstream.get('python') != '3.12':
         fail('recipe requires Python 3.12')
     source_pin(source, upstream)
-    if output.exists() or output.is_symlink():
-        fail('payload already exists; refusing overwrite')
+    if output.is_symlink() or (output.exists() and not output.is_dir()):
+        fail('payload destination is not a real directory')
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.moonraker-payload-', dir=output.parent) as tmp:
         stage = pathlib.Path(tmp) / 'payload'
+        print('prepare-moonraker: staging pinned source', flush=True)
         copy_source(source, stage / 'source')
+        print(f"prepare-moonraker: verifying {len(lock['wheels'])} pinned wheels", flush=True)
         copy_wheels(wheels, lock, stage / 'python')
         provenance = {
             'schema': 1, 'source': upstream,
@@ -132,7 +134,18 @@ def prepare(source, wheels, output):
             json.dumps(provenance, indent=2, sort_keys=True) + '\n',
             encoding='utf-8',
         )
-        stage.rename(output)
+        # Replace a previous generated payload only after staging succeeds.
+        # If staging fails, the existing payload remains untouched.
+        previous = pathlib.Path(tmp) / 'previous'
+        if output.exists():
+            print('prepare-moonraker: replacing existing payload', flush=True)
+            output.rename(previous)
+        try:
+            stage.rename(output)
+        except OSError:
+            if previous.exists():
+                previous.rename(output)
+            raise
 
 
 def main():

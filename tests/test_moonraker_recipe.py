@@ -127,8 +127,15 @@ class MoonrakerRecipeTests(unittest.TestCase):
                 self.assertFalse((output / "source/.git").exists())
                 self.assertEqual(json.loads((output / "provenance.json").read_text())
                                  ["source"]["commit"], commit)
-                with self.assertRaisesRegex(ValueError, "already exists"):
-                    self.mod.prepare(source, cache, output)
+                self.mod.prepare(source, cache, output)
+                self.assertEqual((output / "source/moonraker/moonraker.py").read_text(),
+                                 app_file.read_text())
+                # Failed restaging must preserve the previously published payload.
+                with mock.patch.object(self.mod, "copy_wheels", side_effect=ValueError("broken cache")):
+                    with self.assertRaisesRegex(ValueError, "broken cache"):
+                        self.mod.prepare(source, cache, output)
+                self.assertEqual((output / "source/moonraker/moonraker.py").read_text(),
+                                 app_file.read_text())
                 app_file.write_text("print('dirty')\n")
                 with self.assertRaisesRegex(ValueError, "dirty"):
                     self.mod.source_pin(source, upstream)

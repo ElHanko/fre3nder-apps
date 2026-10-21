@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""Fetch the pinned Moonraker source and wheels for the existing offline preparer.
+
+This host-only helper does not prepare payloads, build or sign packages.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+import urllib.parse
+import urllib.request
+
+ROOT = Path(__file__).resolve().parents[1]
+RECIPE = ROOT / "apps/moonraker"
+DEFAULT_CACHE = ROOT / "local/moonraker"
+MAX_METADATA_BYTES = 8 * 1024 * 1024
+MAX_WHEEL_BYTES = 128 * 1024 * 1024
+
+
+def fail(message: str) -> None:
+    raise ValueError(message)
+
+
+def report(message: str) -> None:
+    print(f"fetch-moonraker-inputs: {message}", file=sys.stderr, flush=True)
+
+
+def format_size(size: int) -> str:
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KiB"
+    return f"{size / (1024 * 1024):.1f} MiB"
+
+
+def checked_file(path: Path, name: str) -> None:
+    if path.is_symlink() or not path.is_file():
+        fail(f"{name} is missing or is not a regular file: {path}")
+
+
+def verified_wheel(path: Path, expected: str) -> bool:
+    if not path.exists() and not path.is_symlink():
+        return False
+    checked_file(path, "cached wheel")
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    if digest.hexdigest() != expected:
+        fail(f"cached wheel SHA-256 mismatch (will not replace): {path.name}")
+    return True
+
+
+def https_json(url: str) -> dict:
+    req = urllib.request.Request(url, headers={"User-Agent": "fre3nder-apps/fetch-moonraker-inputs"})
+    with urllib.request.urlopen(req, timeout=60) as response:
+        if urllib.parse.urlsplit(response.geturl()).scheme != "https":
+            fail("PyPI metadata request left HTTPS")
+        data = response.read(MAX_METADATA_BYTES + 1)
+    if len(data) > MAX_METADATA_BYTES:
+        fail("PyPI metadata exceeds limit")
+    value = json.loads(data)
+    if not isinstance(value, dict):
+        fail("PyPI metadata is not an object")
+    return value
+
+
+def fetch_wheel(directory: Path, wheel: dict, number: int | None = None, total: int | None = None) -> None:
+    name, version, filename, digest = (wheel[k] for k in ("name", "version", "filename", "sha256"))
+    if (not isinstance(filename, str) or not re.fullmatch(r"[A-Za-z0-9_.+-]+\.whl", filename)
+            or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or not isinstance(name, str) or not isinstance(version, str)):
+        fail("invalid Moonraker wheel lock entry")
+    path = directory / filename
+    label = f"[{number}/{total}] {filename}" if number is not None else filename
+    if verified_wheel(path, digest):
+        report(f"{label}: cached, SHA-256 OK")
+        return
+    report(f"{label}: resolving PyPI download")
+    api = ("https://pypi.org/pypi/" + urllib.parse.quote(name, safe="") + "/"
+           + urllib.parse.quote(version, safe="") + "/json")
+    metadata = https_json(api)
+    candidates = [item for item in metadata.get("urls", [])
+                  if isinstance(item, dict) and item.get("filename") == filename
+                  and isinstance(item.get("digests"), dict)
+                  and item["digests"].get("sha256") == digest]
+    if len(candidates) != 1:
+        fail(f"PyPI does not provide the locked wheel: {filename}")
+    entry = candidates[0]
+    url, expected_size = entry.get("url"), entry.get("size")
+    parsed = urllib.parse.urlsplit(url) if isinstance(url, str) else None
+    if (parsed is None or parsed.scheme != "https" or parsed.hostname != "files.pythonhosted.org"
+            or type(expected_size) is not int or not (0 < expected_size <= MAX_WHEEL_BYTES)):
+        fail(f"invalid PyPI wheel download location: {filename}")
+
+    report(f"{label}: downloading ({format_size(expected_size)})")
+    with tempfile.TemporaryDirectory(prefix=".moonraker-wheel-", dir=directory) as tmp:
+        temporary = Path(tmp) / filename
+        request = urllib.request.Request(url, headers={"User-Agent": "fre3nder-apps/fetch-moonraker-inputs"})
+        size = 0
+        next_report = 5 * 1024 * 1024
+        sha256 = hashlib.sha256()
+        with urllib.request.urlopen(request, timeout=60) as response, temporary.open("xb") as output:
+            actual_url = urllib.parse.urlsplit(response.geturl())
+            if actual_url.scheme != "https" or actual_url.hostname != "files.pythonhosted.org":
+                fail(f"wheel download left PyPI HTTPS: {filename}")
+            for block in iter(lambda: response.read(1024 * 1024), b""):
+                size += len(block)
+                if size > expected_size:
+                    fail(f"wheel download exceeds pinned size: {filename}")
+                sha256.update(block)
+                output.write(block)
+                if size >= next_report:
+                    report(f"{label}: {format_size(size)} / {format_size(expected_size)}")
+                    next_report += 5 * 1024 * 1024
+        if size != expected_size or sha256.hexdigest() != digest:
+            fail(f"wheel download integrity check failed: {filename}")
+        temporary.rename(path)
+    report(f"{label}: downloaded, SHA-256 OK")
+
+
+def fetch_source(destination: Path, upstream: dict) -> None:
+    commit = upstream.get("commit")
+    repository = upstream.get("repository")
+    if (not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit)
+            or not isinstance(repository, str) or not repository):
+        fail("invalid Moonraker source pin")
+    if destination.is_symlink():
+        fail("Moonraker source directory is a symlink")
+    if not destination.exists():
+        report(f"Moonraker source: fetching pinned commit {commit[:12]}")
+        with tempfile.TemporaryDirectory(prefix=".moonraker-source-", dir=destination.parent) as tmp:
+            checkout = Path(tmp) / "source"
+            subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+            subprocess.run(["git", "-C", str(checkout), "remote", "add", "origin", repository], check=True)
+            subprocess.run(["git", "-C", str(checkout), "fetch", "--progress", "--depth=1", "origin", commit], check=True)
+            subprocess.run(["git", "-C", str(checkout), "checkout", "-q", "--detach", "FETCH_HEAD"], check=True)
+            validate_source(checkout, commit)
+            checkout.rename(destination)
+    else:
+        report("Moonraker source: checking cached checkout")
+    validate_source(destination, commit)
+    report(f"Moonraker source: verified commit {commit[:12]}")
+
+
+def validate_source(path: Path, commit: str) -> None:
+    if path.is_symlink() or not (path / ".git").is_dir():
+        fail("Moonraker source cache must be a Git checkout")
+    head = subprocess.check_output(["git", "-C", str(path), "rev-parse", "HEAD"], text=True).strip()
+    if head != commit:
+        fail("Moonraker source cache does not match the pinned commit")
+    if subprocess.check_output(["git", "-C", str(path), "status", "--porcelain=v1"], text=True):
+        fail("Moonraker source cache has uncommitted changes")
+    checked_file(path / "moonraker/moonraker.py", "Moonraker entrypoint")
+
+
+def fetch(cache: Path) -> tuple[Path, Path]:
+    upstream = json.loads((RECIPE / "upstream.json").read_text(encoding="utf-8"))
+    lock = json.loads((RECIPE / "python-wheels.json").read_text(encoding="utf-8"))
+    if cache.is_symlink() or (cache.exists() and not cache.is_dir()):
+        fail("Moonraker cache must be a regular directory")
+    cache.mkdir(parents=True, exist_ok=True)
+    source, wheels = cache / "source", cache / "wheels"
+    report(f"Preparing Moonraker inputs in {cache}")
+    fetch_source(source, upstream)
+    if wheels.is_symlink() or (wheels.exists() and not wheels.is_dir()):
+        fail("Moonraker wheel cache must be a regular directory")
+    wheels.mkdir(exist_ok=True)
+    total = len(lock["wheels"])
+    report(f"Checking {total} pinned Python wheels")
+    for number, wheel in enumerate(lock["wheels"], start=1):
+        fetch_wheel(wheels, wheel, number, total)
+    report("All Moonraker inputs are ready")
+    return source, wheels
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
+    args = parser.parse_args()
+    try:
+        source, wheels = fetch(args.cache.absolute())
+    except (OSError, ValueError, KeyError, json.JSONDecodeError, subprocess.CalledProcessError) as exc:
+        print(f"fetch-moonraker-inputs: {exc}", file=sys.stderr)
+        return 1
+    print(f"SOURCE={source}")
+    print(f"WHEELS={wheels}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

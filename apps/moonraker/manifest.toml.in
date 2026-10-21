@@ -2,8 +2,8 @@ format = 1
 
 [app]
 name = "moonraker"
-version = "0.0.0-fre3nder.0.bootstrap"
-release_serial = 0
+version = "git.9e676eb-fre3nder.1"
+release_serial = 1
 
 [publisher]
 id = "fre3nder-official"

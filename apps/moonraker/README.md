@@ -18,10 +18,24 @@ source commit and a directory containing the locked wheels:
 scripts/prepare-moonraker --source <moonraker-checkout> --wheels <wheel-cache>
 ```
 
+For a fresh clone, the optional input fetcher fills the ignored local cache
+from the pinned Moonraker Git commit and the SHA-256-locked PyPI wheels:
+
+```sh
+scripts/fetch-moonraker-inputs
+scripts/prepare-moonraker \
+  --source local/moonraker/source \
+  --wheels local/moonraker/wheels
+```
+
+The fetcher reuses matching cached inputs, rejects modifications, and does not
+prepare payloads or sign packages. The offline `prepare-moonraker` workflow above
+remains available when the source checkout and wheels are supplied separately.
+
 The preparer works offline, verifies the source commit and wheel hashes, and
 stages `apps/moonraker/payload/` with source, Python modules and provenance.
-It excludes Git metadata and Python caches and refuses to overwrite an existing
-payload. Bundled source and wheels retain their upstream license texts.
+It excludes Git metadata and Python caches. Repeated runs replace the existing
+payload only after successful staging; failures preserve the previous payload. Bundled source and wheels retain their upstream license texts.
 
 ## Packaging and image integration
 
