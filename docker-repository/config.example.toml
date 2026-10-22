@@ -1,0 +1,21 @@
+# Copy to local/config.toml. Do not commit site-specific configuration.
+[server]
+check_interval_hours = 6
+
+[repository]
+name = "My Fre3nder Repository"
+signing_key = "/run/secrets/repository-private.pem"
+
+# An existing publisher key; does not have to be fre3nder-official.
+# The repository's private index key must be different from the publisher key.
+[publishers.my-publisher]
+public_key = "/run/secrets/publisher-public.pem"
+
+# Every published app must be explicitly enabled and assigned to a publisher.
+# mode values are RESERVED FOR THE LATER BUILD AUTOMATION; this initial
+# publisher only imports already-signed .fre3app files.
+[apps.my-app]
+enabled = true
+publisher = "my-publisher"
+mode = "maintained" # maintained | releases | commits
+channel = "stable"  # stable | testing
