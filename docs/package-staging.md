@@ -223,10 +223,16 @@ The optional Docker repository still consumes only already signed archives via
 The optional inputs preserve the platform consumers' default invocations; no
 platform consumer change is required for these optional CLI additions.
 
-Later work must isolate foreign builds from publisher keys and the trusted
-signing process: limit OctoApp Buildroot mounts to required inputs, remove key
-directories from build containers, keep dependency/source processing unprivileged,
-and pass a reviewed immutable staging artifact to signing. The current shared
+OctoApp's native builder uses the sibling platform's
+`scripts/x2000-build-input-sha256 --snapshot DIR` interface for selected tracked
+inputs, mounted read-only without Git metadata or production key directories.
+The coordinated platform change also removes its complete project mounts;
+see the platform's `docs/build.md` for the input selection and mount contract.
+Both repositories must contain this interface; there is no whole-project fallback.
+
+Later work must isolate foreign builds from the trusted signing process, keep
+dependency/source processing unprivileged, and pass a reviewed immutable staging
+artifact to signing. The current shared
 native bundle locations and existing native build wrapper are not a sandbox or
 independent concurrent native-build environments. Serial allocation and preventing
 reuse across builds require a future persistent repository build history. Neither

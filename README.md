@@ -172,8 +172,13 @@ differ. The lock must match those requirements. Python 3.12, the existing
 integration patch and the maintained native dependency definitions remain gates.
 `--source DIR` requires a clean checkout at the selected commit; `--wheel-dir DIR`
 allows offline wheel input. The staged metadata describes those selected inputs.
-Preparation needs no publisher key and does not start a native build. Native
-bundle overrides and full Buildroot mount/signing isolation remain separate work.
+Preparation needs no publisher key and does not start a native build. The native
+builder now mounts a temporary selection of tracked platform inputs read-only,
+using the platform's `x2000-build-input-sha256 --snapshot` interface. It does not
+mount the platform checkout or its production key directories. The existing
+Buildroot work tree remains writable; host tools from that tree and the later
+signing boundary still require separate isolation work. Native bundle overrides
+remain separate work.
 
 On the printer the package service creates a pip-free isolated environment under
 the app data directory. It uses `include-system-site-packages = false`; no

@@ -87,6 +87,9 @@ def main():
         fail("Fre3nder project root not found")
 
     work = br.parent
+    keys = project / "local/production/keys"
+    if project.is_relative_to(work) or keys.is_relative_to(work) or work.is_relative_to(keys):
+        fail("Buildroot work directory must not contain the project or production keys")
     version = (project / "VERSION").read_text().strip()
     image = f"ender3-v3-ke-fre3nder-x2000:{version}"
     docker = os.environ.get("X2000_BUILD_DOCKER", "docker")
@@ -112,7 +115,7 @@ def main():
 
         command += [
             "-v",
-            f"{project}:/project:ro",
+            f"{project_inputs}:/project:ro",
             "-v",
             f"{work}:/work",
             "--entrypoint",
@@ -125,8 +128,15 @@ def main():
 
         subprocess.run(command, check=True)
 
-    run_buildroot_target("python-pycryptodomex-source")
-    run_buildroot_target("python-pycryptodomex-build", offline=True)
+    with tempfile.TemporaryDirectory(prefix="octoapp-project-inputs-") as temporary:
+        project_inputs = Path(temporary) / "project"
+        snapshot_tool = project / "scripts/x2000-build-input-sha256"
+        if not snapshot_tool.is_file():
+            fail("Fre3nder project input snapshot tool is missing")
+        subprocess.run(["python3", str(snapshot_tool), "--root", str(project),
+                        "--snapshot", str(project_inputs)], check=True)
+        run_buildroot_target("python-pycryptodomex-source")
+        run_buildroot_target("python-pycryptodomex-build", offline=True)
 
     if target_namespace.exists():
         fail(
