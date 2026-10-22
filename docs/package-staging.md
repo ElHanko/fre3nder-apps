@@ -6,8 +6,8 @@ source directory. Pass only an explicitly prepared package source to
 
 ## Preparation contract
 
-The Fluidd, Moonraker, OctoApp and Fre3nderScreen preparers now assemble a complete
-package source under `local/<app>/package/`. Their `--output DIR` selects another
+The Fluidd, Moonraker, OctoApp, Fre3nderScreen and fre3nder-app-update preparers
+assemble a complete package source under `local/<app>/package/`. Their `--output DIR` selects another
 package source directory, not a payload directory. Preparation does not accept,
 read or require a publisher private key. Existing payload preparation functions,
 source pins, dependency locks and validation remain in use.
@@ -100,6 +100,7 @@ before scripts and tests were moved into the recipes.
 | App | Previously packaged | Explicit package source now | Purpose |
 | --- | --- | --- | --- |
 | Dummy | `service`, `payload/message.txt` | Same files, plus the manifest template before packaging | Generic package/lifecycle fixture |
+| fre3nder-app-update | New optional app | `service`, `payload/client.py`, `licenses/LICENSE`, plus the manifest template | First-party index discovery client; AGPL-3.0-or-later license copied from the repository root; no local source configuration or keys |
 | Fluidd | `service`, `upstream.json`, `licenses/UPSTREAM`, `licenses/LICENSE.fluidd`, `payload/**` | Same files, plus the manifest template | Static web runtime; exact release archive/source identity and GPL notice |
 | Moonraker | `service`, `upstream.json`, `python-wheels.json`, `licenses/UPSTREAM`, `README.md`, `.gitignore`, `payload/**` | Everything listed except `README.md` and `.gitignore`, plus the manifest template | Runtime source and Python dependencies; source/wheel locks and payload provenance; upstream license material remains within the payload |
 | OctoApp | `service`, `upstream.json`, `python-wheels.json`, `requirements.in`, `native-deps.json`, `patches/0001-fre3nder-disable-system-config.patch`, `licenses/UPSTREAM`, `licenses/LICENSE.octoflatbuffers`, `payload/**` | Same recipe files and runtime payload without Python caches or `Cryptodome/SelfTest/`, plus the manifest template | Patched application, isolated Python dependencies and runtime metadata; integration patch, dependency definitions and license/provenance material |
@@ -194,7 +195,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests \
   -p test_build_fre3app.py -k Manifest -k Metadata -v
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p test_stage_fre3app.py -v
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p test_docker_repository.py -v
-for app in fluidd moonraker octoapp doom fre3nderscreen; do
+for app in fluidd moonraker octoapp doom fre3nderscreen fre3nder-app-update; do
   PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s "apps/$app/tests" -v || exit
 done
 ```

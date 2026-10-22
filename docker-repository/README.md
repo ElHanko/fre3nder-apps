@@ -6,7 +6,8 @@ creates a deterministic `index.json`, signs the exact index bytes with a
 **separate Ed25519 repository key**, and exposes the public files through Nginx.
 
 **Not implemented in this stage:** automatic upstream discovery/builds, mirrors,
-printer-side repository management, update notifications, and installation.
+package downloads, update notifications, and installation. The optional index
+client is a separate [Fre3nder app](../apps/fre3nder-app-update/README.md).
 Configured build modes are reserved for the subsequent stage and **do not
 trigger builds**. The repository never re-signs `.fre3app` archives.
 
@@ -142,11 +143,13 @@ must not mutate tracked recipes or expose publisher private keys to arbitrary
 upstream build scripts. Mirror mode is intentionally deferred: it would copy
 unaltered foreign signed packages and sign only its own repository index.
 
-The optional `fre3nder-app-update.fre3app` is planned to check a configured,
-trusted index shortly after networking becomes available, then every 30 minutes.
-With no configured repository it will perform **no checks**. It will expose
-available updates to Fre3nderScreen; actual downloads and installs will occur
-only on operator request through the platform package core.
+The optional `fre3nder-app-update` app checks an explicitly configured, trusted
+index at startup, retries failures in the background, then checks every
+approximately 30 minutes after success. With no configured URL and repository
+public key it performs **no checks**. It persists verified package offers for
+future Fre3nderScreen readers. Installed-version comparison, Screen integration,
+package downloads and installations remain future work; installation must still
+use the platform package core and its independent publisher verification.
 
 ## Developer validation
 

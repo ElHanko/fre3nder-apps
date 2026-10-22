@@ -1,0 +1,67 @@
+#!/bin/sh
+# Unprivileged index discovery; no package downloads or installation.
+set -eu
+umask 077
+runtime=${FRE3NDER_APP_RUNTIME_DIR:?}
+data=${FRE3NDER_APP_DATA_DIR:?}
+python=${FRE3NDER_PYTHON:-/usr/bin/python3}
+entrypoint=$runtime/payload/client.py
+pid_file=$data/client.pid
+
+running() {
+    [ -f "$pid_file" ] && [ ! -L "$pid_file" ] || return 1
+    pid=$(cat "$pid_file")
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$pid" -gt 1 ] && kill -0 "$pid" 2>/dev/null || return 1
+    [ -r "/proc/$pid/cmdline" ] || return 1
+    tr '\000' '\n' < "/proc/$pid/cmdline" | grep -Fxq -- "$entrypoint" || return 1
+    tr '\000' '\n' < "/proc/$pid/cmdline" | grep -Fxq -- "$data" || return 1
+}
+
+verify_payload() {
+    [ -f "$entrypoint" ] && [ ! -L "$entrypoint" ] && [ -x "$python" ] || return 1
+    command -v openssl >/dev/null 2>&1
+}
+
+stop_app() {
+    if running; then
+        kill "$pid"
+        tries=0
+        while running && [ "$tries" -lt 20 ]; do
+            sleep 0.1
+            tries=$((tries + 1))
+        done
+        if running; then
+            kill -KILL "$pid"
+            sleep 0.1
+            running && return 1
+        fi
+    fi
+    rm -f -- "$pid_file"
+}
+
+case "${1:-}" in
+install|update|restore)
+    verify_payload
+    mkdir -p "$data"
+    ;;
+start)
+    verify_payload
+    running && exit 0
+    mkdir -p "$data"
+    rm -f -- "$pid_file"
+    start-stop-daemon -S -q -b -p "$pid_file" -x "$python" -- \
+        "$entrypoint" --data "$data"
+    tries=0
+    while [ "$tries" -lt 20 ]; do
+        running && exit 0
+        sleep 0.1
+        tries=$((tries + 1))
+    done
+    echo 'fre3nder-app-update: background process did not start' >&2
+    exit 1
+    ;;
+stop|uninstall) stop_app ;;
+status) running ;;
+*) echo 'usage: service {install|update|restore|start|stop|status|uninstall}' >&2; exit 2 ;;
+esac

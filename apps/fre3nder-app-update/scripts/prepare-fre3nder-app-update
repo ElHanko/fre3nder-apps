@@ -1,0 +1,28 @@
+#!/usr/bin/env python3
+"""Stage the first-party repository client without network or signing keys."""
+
+import argparse
+from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "scripts"))
+from stage_fre3app import checked_file, package_stage
+
+RECIPE = ROOT / "apps/fre3nder-app-update"
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, default=ROOT / "local/fre3nder-app-update/package")
+    args = parser.parse_args()
+    with package_stage(RECIPE, args.output) as stage:
+        (stage / "payload").mkdir()
+        (stage / "payload/client.py").write_bytes(checked_file(RECIPE / "payload/client.py"))
+        (stage / "licenses").mkdir()
+        (stage / "licenses/LICENSE").write_bytes(checked_file(ROOT / "LICENSE"))
+    print(f"PREPARED={args.output.resolve()}")
+
+
+if __name__ == "__main__":
+    main()

@@ -14,6 +14,7 @@ The repository contains:
 - a minimal `dummy` package used to qualify the format and lifecycle contract;
 - the pinned Fluidd 1.37.6 web frontend recipe;
 - the pinned OctoApp 3.2.4 local-Moonraker application recipe;
+- the optional `fre3nder-app-update` signed repository-index client;
 - host-side tests for reproducibility and package signatures.
 
 No App Store is required. A `.fre3app` artifact can be installed directly by
@@ -44,6 +45,22 @@ stable `--version VERSION --release-serial N` together (`N >= 1`), or the existi
 automatically. See [selected-input examples](docs/package-staging.md#selected-build-inputs)
 and [release metadata](docs/package-layout.md#release-metadata). Builds and signing
 still require the applicable operator authorization.
+
+## Optional repository discovery
+
+`fre3nder-app-update` checks a single operator-configured repository index and
+exposes verified package offers in its persistent app data. Without a configured
+URL and existing repository public key it performs no network access. It does
+not download or install packages and receives no management-socket permissions.
+
+```sh
+apps/fre3nder-app-update/scripts/prepare-fre3nder-app-update
+```
+
+The prepared source is `local/fre3nder-app-update/package`, for the unchanged
+generic builder after separate signing authorization. Configuration, replay
+protection, status data and host tests are documented in the
+[app recipe](apps/fre3nder-app-update/README.md).
 
 ## Fluidd
 
