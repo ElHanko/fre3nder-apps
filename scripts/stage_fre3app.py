@@ -3,6 +3,7 @@
 
 import argparse
 from contextlib import contextmanager
+import hashlib
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -18,8 +19,20 @@ CACHES = {".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
 def checked_file(path):
     if path.is_symlink() or not stat.S_ISREG(path.lstat().st_mode):
         raise ValueError(f"package source must be a regular non-symlink file: {path}")
-    if PRIVATE_KEY.search(path.read_bytes()):
+    data = path.read_bytes()
+    if PRIVATE_KEY.search(data):
         raise ValueError(f"private key in package source: {path}")
+    return data
+
+
+def input_digest(inputs):
+    """Identify immutable input snapshots without incorporating their host paths."""
+    digest = hashlib.sha256()
+    for name, data in sorted(inputs.items()):
+        digest.update(name.encode('utf-8') + b'\0')
+        digest.update(len(data).to_bytes(8, 'big'))
+        digest.update(data)
+    return digest.hexdigest()
 
 
 def validate_source(source):
@@ -36,15 +49,22 @@ def validate_source(source):
 
 
 @contextmanager
-def package_stage(recipe, output, *, files=()):
+def package_stage(recipe, output, *, files=(), overrides=None, protected=()):
     """Copy named recipe files, let the app prepare payload, then replace output."""
     recipe, output = Path(recipe), Path(output)
+    overrides = {} if overrides is None else overrides
+    if set(overrides) - set(files):
+        raise ValueError("input overrides must name explicitly selected recipe files")
     if recipe.is_symlink() or not recipe.is_dir():
         raise ValueError("recipe must be a real directory")
     if output.is_symlink() or (output.exists() and not output.is_dir()):
         raise ValueError("package destination must be a real directory")
     if output.resolve().is_relative_to(recipe.resolve()) or recipe.resolve().is_relative_to(output.resolve()):
         raise ValueError("package destination must be separate from the recipe")
+    for path in protected:
+        if path is not None and (Path(path).resolve().is_relative_to(output.resolve())
+                                 or output.resolve().is_relative_to(Path(path).resolve())):
+            raise ValueError("package destination must be separate from build inputs")
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".fre3app-source-", dir=output.parent) as temporary:
         temporary = Path(temporary)
@@ -54,15 +74,18 @@ def package_stage(recipe, output, *, files=()):
             relative = PurePosixPath(name)
             if relative.is_absolute() or any(part in ("", ".", "..") for part in name.split("/")) or "\\" in name:
                 raise ValueError(f"unsafe recipe member: {name}")
-            source = recipe
-            for part in relative.parts:
-                source = source / part
-                if source.is_symlink():
-                    raise ValueError(f"symlink in recipe member: {name}")
-            checked_file(source)
+            if name in overrides:
+                data = overrides[name]
+            else:
+                source = recipe
+                for part in relative.parts:
+                    source = source / part
+                    if source.is_symlink():
+                        raise ValueError(f"symlink in recipe member: {name}")
+                data = checked_file(source)
             destination = stage / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source, destination)
+            destination.write_bytes(data)
         yield stage
         validate_source(stage)
         previous = temporary / "previous"

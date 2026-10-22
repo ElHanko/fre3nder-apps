@@ -36,6 +36,15 @@ keyless package sources under ignored `local/<app>/package/`; only these are
 passed to the builder. See [package staging](docs/package-staging.md) for the
 file inventory, migration and host regression tests.
 
+Alternative upstream and dependency inputs can be supplied directly to existing
+preparers without editing recipes. Changed inputs use separate cache/output
+namespaces unless an explicit output is supplied. The generic builder accepts
+stable `--version VERSION --release-serial N` together (`N >= 1`), or the existing
+`--develop --version VERSION` with serial zero. No version or serial is allocated
+automatically. See [selected-input examples](docs/package-staging.md#selected-build-inputs)
+and [release metadata](docs/package-layout.md#release-metadata). Builds and signing
+still require the applicable operator authorization.
+
 ## Fluidd
 
 Fluidd is a static web frontend with no daemon. Its entire web payload is
@@ -53,6 +62,9 @@ scripts/build-fre3app local/fluidd/package --key <signing-key>
 into `local/fluidd/package/payload/`, and validates `index.html` and
 `release_info.json`. `--archive <file>` uses a previously downloaded archive
 with the same checks. The builder signs every payload file in `SHA256SUMS`.
+`--upstream FILE` selects another official Fluidd release definition. Its exact
+bytes are staged, and the service checks the payload against that selected
+version. Commit-only source builds are not supported.
 
 Fluidd's source commit, archive identity and GPL-3.0-only redistribution
 information are recorded in `apps/fluidd/upstream.json` and
@@ -153,6 +165,15 @@ downloads only the hash-locked universal wheels, stages Pillow from the
 Fre3nder Buildroot output, and stages the app-local pycryptodomex bundle
 produced by `build-octoapp-native`. The resulting payload contains OctoApp,
 all application Python dependencies and runtime metadata.
+
+`--upstream FILE` and `--lock FILE` select another source pin and universal-wheel
+lock; `--requirements FILE` supplies the corresponding requirements when they
+differ. The lock must match those requirements. Python 3.12, the existing
+integration patch and the maintained native dependency definitions remain gates.
+`--source DIR` requires a clean checkout at the selected commit; `--wheel-dir DIR`
+allows offline wheel input. The staged metadata describes those selected inputs.
+Preparation needs no publisher key and does not start a native build. Native
+bundle overrides and full Buildroot mount/signing isolation remain separate work.
 
 On the printer the package service creates a pip-free isolated environment under
 the app data directory. It uses `include-system-site-packages = false`; no

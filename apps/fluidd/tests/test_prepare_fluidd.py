@@ -107,6 +107,7 @@ class FluiddSourceTests(unittest.TestCase):
         archive, upstream = self.fixture()
         runtime = self.root / "runtime"
         self.helper.prepare(archive, runtime / "payload", upstream)
+        (runtime / "upstream.json").write_text(json.dumps({**upstream, "project": "fluidd-core/fluidd"}))
         env = dict(os.environ, FRE3NDER_APP_RUNTIME_DIR=str(runtime))
         for action in ("install", "update", "restore", "start", "status", "stop", "uninstall"):
             result = subprocess.run(["sh", str(SOURCE / "service"), action], env=env, capture_output=True)

@@ -142,6 +142,37 @@ class MoonrakerRecipeTests(unittest.TestCase):
                     "payload/source/moonraker/moonraker.py", "payload/python/testdep/__init__.py",
                     "payload/provenance.json",
                 })
+                maintained = {p: p.read_bytes() for p in local_recipe.rglob('*') if p.is_file()}
+                selected_upstream = base / 'selected-upstream.json'
+                selected_lock = base / 'selected-lock.json'
+                selected_upstream.write_text(json.dumps(dict(upstream, version='fixture-selected')))
+                selected_lock.write_text(json.dumps(dict(lock, fixture='selected')))
+                selected_bytes = (selected_upstream.read_bytes(), selected_lock.read_bytes())
+                arguments = [str(PREPARE), '--source', str(source), '--wheels', str(cache),
+                             '--upstream', str(selected_upstream), '--lock', str(selected_lock),
+                             '--output', str(package)]
+                with mock.patch.object(sys, 'argv', arguments):
+                    self.mod.main()
+                    self.assertEqual((package / 'upstream.json').read_bytes(), selected_bytes[0])
+                    self.assertEqual((package / 'python-wheels.json').read_bytes(), selected_bytes[1])
+                    provenance = json.loads((package / 'payload/provenance.json').read_text())
+                    self.assertEqual(provenance['source']['version'], 'fixture-selected')
+                    good_stage = {p.relative_to(package): p.read_bytes() for p in package.rglob('*') if p.is_file()}
+                    for bad_upstream, bad_lock in (
+                        (dict(upstream, commit='0' * 40), lock),
+                        (upstream, dict(lock, wheels=[dict(lock['wheels'][0], sha256='0' * 64)])),
+                        (upstream, dict(lock, target={'python': '3.13'})),
+                        (upstream, {}),
+                        (None, lock),
+                        (upstream, None),
+                    ):
+                        selected_upstream.write_text(json.dumps(bad_upstream))
+                        selected_lock.write_text(json.dumps(bad_lock))
+                        with self.assertRaises(SystemExit) as error:
+                            self.mod.main()
+                        self.assertEqual(error.exception.code, 1)
+                        self.assertEqual(good_stage, {p.relative_to(package): p.read_bytes() for p in package.rglob('*') if p.is_file()})
+                self.assertEqual(maintained, {p: p.read_bytes() for p in local_recipe.rglob('*') if p.is_file()})
                 self.mod.prepare(source, cache, output)
                 self.assertEqual((output / "source/moonraker/moonraker.py").read_text(),
                                  app_file.read_text())
@@ -171,7 +202,7 @@ class MoonrakerRecipeTests(unittest.TestCase):
             digest = hashlib.sha256((cache / name).read_bytes()).hexdigest()
             lock = {
                 "target": {"python": "3.12", "platform": "any", "implementation": "py", "abi": "none"},
-                "wheels": [{"filename": name, "sha256": digest}]
+                "wheels": [{"name": "testdep", "version": "1.0", "filename": name, "sha256": digest}]
             }
             with self.assertRaisesRegex(ValueError, "unsafe wheel member"):
                 self.mod.copy_wheels(cache, lock, base / "destination")

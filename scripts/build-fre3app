@@ -21,11 +21,17 @@ FINGERPRINT_TOKEN = "@PUBLISHER_FINGERPRINT@"
 FIXED_TIME = (1980, 1, 1, 0, 0, 0)
 APP_RE = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 PUBLISHER_RE = re.compile(r"[a-z][a-z0-9_.-]{0,63}")
+VERSION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+_-]*")
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
 
 def fail(message: str) -> "None":
     raise ValueError(message)
+
+
+def valid_version(version) -> bool:
+    return (isinstance(version, str) and len(version) <= 128
+            and VERSION_RE.fullmatch(version) is not None)
 
 
 def regular_file(path: pathlib.Path, label: str) -> None:
@@ -85,23 +91,29 @@ def source_members(source: pathlib.Path) -> list[tuple[str, pathlib.Path]]:
     return members
 
 
-def validate_mode(develop: bool, version: str | None) -> None:
+def validate_mode(develop: bool, version: str | None, release_serial: int | None = None) -> None:
     if develop:
-        if (not isinstance(version, str) or not version or len(version) > 128
-                or "-fre3nder.0." not in version or not version.isprintable()):
+        if release_serial is not None:
+            fail("--develop and --release-serial cannot be combined")
+        if not valid_version(version) or "-fre3nder.0." not in version:
             fail("development build requires a valid --version containing -fre3nder.0.")
-    elif version is not None:
-        fail("--version requires --develop")
+    elif version is not None or release_serial is not None:
+        if version is None or release_serial is None:
+            fail("stable override requires both --version and --release-serial")
+        if type(release_serial) is not int or release_serial < 1:
+            fail("stable --release-serial must be a positive integer")
+        if not valid_version(version):
+            fail("stable --version is invalid")
 
 
-def render_development_app(text: str, version: str) -> str:
+def render_app_metadata(text: str, version: str, release_serial: int) -> str:
     lines = text.splitlines(keepends=True)
     app_headers = [i for i, line in enumerate(lines) if re.fullmatch(r"\s*\[app\]\s*(?:#.*)?", line.rstrip("\r\n"))]
     if len(app_headers) != 1:
         fail("manifest must contain exactly one [app] block")
     start = app_headers[0] + 1
     end = next((i for i in range(start, len(lines)) if lines[i].lstrip().startswith("[")), len(lines))
-    for key, value in (("version", json.dumps(version)), ("release_serial", "0")):
+    for key, value in (("version", json.dumps(version)), ("release_serial", str(release_serial))):
         matches = [i for i in range(start, end) if re.match(rf"\s*{key}\s*=", lines[i])]
         if len(matches) != 1:
             fail(f"manifest [app] must contain exactly one {key} line")
@@ -112,17 +124,18 @@ def render_development_app(text: str, version: str) -> str:
     return "".join(lines)
 
 
-def render_manifest(source: pathlib.Path, fingerprint: str, develop: bool = False, version: str | None = None) -> bytes:
-    validate_mode(develop, version)
+def render_manifest(source: pathlib.Path, fingerprint: str, develop: bool = False,
+                    version: str | None = None, release_serial: int | None = None) -> bytes:
+    validate_mode(develop, version, release_serial)
     template = source / "manifest.toml.in"
     regular_file(template, "manifest template")
     text = template.read_text(encoding="utf-8")
     if text.count(FINGERPRINT_TOKEN) != 1:
         fail("manifest template must contain publisher fingerprint token exactly once")
     rendered = text.replace(FINGERPRINT_TOKEN, fingerprint)
-    if develop:
+    if develop or release_serial is not None:
         tomllib.loads(rendered)
-        rendered = render_development_app(rendered, version)
+        rendered = render_app_metadata(rendered, version, 0 if develop else release_serial)
     data = rendered.encode("utf-8")
     manifest = tomllib.loads(rendered)
 
@@ -137,7 +150,7 @@ def render_manifest(source: pathlib.Path, fingerprint: str, develop: bool = Fals
 
     if not isinstance(app, dict) or not APP_RE.fullmatch(str(app.get("name", ""))):
         fail("manifest app name is invalid")
-    if not isinstance(app.get("version"), str) or not app["version"] or len(app["version"]) > 128:
+    if not valid_version(app.get("version")):
         fail("manifest app version is invalid")
     if type(app.get("release_serial")) is not int or (app["release_serial"] != 0 if develop else app["release_serial"] < 1):
         fail("manifest release_serial is invalid")
@@ -214,14 +227,23 @@ def write_zip(output: pathlib.Path, files: dict[str, bytes]) -> None:
 
 
 def build(source: pathlib.Path, private_key: pathlib.Path, output: pathlib.Path | None,
-          develop: bool = False, version: str | None = None) -> pathlib.Path:
-    validate_mode(develop, version)
+          develop: bool = False, version: str | None = None,
+          release_serial: int | None = None) -> pathlib.Path:
+    validate_mode(develop, version, release_serial)
     source = source.resolve()
     if not source.is_dir():
         fail(f"package source directory is missing: {source}")
 
+    if version is None:
+        # Template versions must also be checked before accessing the key.
+        template = source / "manifest.toml.in"
+        regular_file(template, "manifest template")
+        app = tomllib.loads(template.read_text(encoding="utf-8")).get("app")
+        if not isinstance(app, dict) or not valid_version(app.get("version")):
+            fail("manifest app version is invalid")
+
     fingerprint = publisher_fingerprint(private_key)
-    manifest_data = render_manifest(source, fingerprint, develop, version)
+    manifest_data = render_manifest(source, fingerprint, develop, version, release_serial)
     manifest = tomllib.loads(manifest_data.decode("utf-8"))
 
     files: dict[str, bytes] = {"manifest.toml": manifest_data}
@@ -277,10 +299,11 @@ def main() -> int:
     parser.add_argument("--output", type=pathlib.Path)
     parser.add_argument("--develop", action="store_true")
     parser.add_argument("--version")
+    parser.add_argument("--release-serial", type=int)
     args = parser.parse_args()
 
     try:
-        output = build(args.source, args.key, args.output, args.develop, args.version)
+        output = build(args.source, args.key, args.output, args.develop, args.version, args.release_serial)
     except (OSError, ValueError, tomllib.TOMLDecodeError) as exc:
         print(f"build-fre3app: {exc}", file=sys.stderr)
         return 1

@@ -11,10 +11,10 @@ import signal
 import subprocess
 import sys
 import time
+import tomllib
 
 
 PYTHON_MINOR = "3.12"
-APP_VERSION = "3.2.4"
 
 runtime = Path(os.environ["FRE3NDER_APP_RUNTIME_DIR"])
 data = Path(os.environ["FRE3NDER_APP_DATA_DIR"])
@@ -37,12 +37,28 @@ def fail(message):
 
 def metadata():
     try:
+        for path in (runtime_meta, runtime / 'upstream.json', app_root / 'pyproject.toml'):
+            if path.is_symlink() or not path.is_file():
+                fail('runtime metadata must be regular non-symlink files')
         value = json.loads(runtime_meta.read_text(encoding="utf-8"))
+        upstream = json.loads((runtime / 'upstream.json').read_text(encoding='utf-8'))
+        project = tomllib.loads((app_root / 'pyproject.toml').read_text(encoding='utf-8')).get('project', {})
     except (OSError, ValueError, TypeError) as exc:
         fail(f"invalid runtime metadata: {exc}")
     if (
         not isinstance(value, dict)
-        or value.get("app_version") != APP_VERSION
+        or not isinstance(upstream, dict)
+        or not isinstance(project, dict)
+        or upstream.get('project') != 'OctoApp-Plugin'
+        or upstream.get('runtime') != 'moonraker_octoapp'
+        or upstream.get('python') != PYTHON_MINOR
+        or not isinstance(value.get('app_version'), str) or not value['app_version']
+        or value['app_version'] != upstream.get('version')
+        or project.get('name') != 'OctoApp' or project.get('version') != value['app_version']
+        or value.get('upstream_commit') != upstream.get('commit')
+        or not isinstance(value.get('upstream_commit'), str)
+        or len(value['upstream_commit']) != 40
+        or any(char not in '0123456789abcdef' for char in value['upstream_commit'])
         or value.get("python") != PYTHON_MINOR
         or not isinstance(value.get("dependency_tree_sha256"), str)
         or len(value["dependency_tree_sha256"]) != 64

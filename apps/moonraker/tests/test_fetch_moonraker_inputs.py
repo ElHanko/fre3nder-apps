@@ -60,7 +60,9 @@ class FetchMoonrakerInputsTests(unittest.TestCase):
         (self.recipe / "upstream.json").write_text(json.dumps({
             "repository": str(self.origin), "commit": self.commit,
         }))
-        (self.recipe / "python-wheels.json").write_text(json.dumps({"wheels": [{
+        (self.recipe / "python-wheels.json").write_text(json.dumps({
+            "target": {"python": "3.12", "platform": "any", "implementation": "py", "abi": "none"},
+            "wheels": [{
             "name": "testdep", "version": "1.0", "filename": self.filename,
             "sha256": self.digest,
         }]}))
@@ -150,6 +152,24 @@ class FetchMoonrakerInputsTests(unittest.TestCase):
             source, _ = helper.fetch(self.cache)
         with self.assertRaisesRegex(ValueError, "pinned commit"):
             helper.validate_source(source, "0" * 40)
+
+    def test_selected_inputs_have_separate_cache_and_remain_unchanged(self):
+        upstream = self.base / 'selected-upstream.json'
+        lock = self.base / 'selected-lock.json'
+        upstream.write_text(json.dumps({'repository': str(self.origin), 'commit': self.commit,
+                                        'fixture': 'alternative'}))
+        lock.write_bytes((self.recipe / 'python-wheels.json').read_bytes() + b'\n')
+        paths = (upstream, lock, self.recipe / 'upstream.json', self.recipe / 'python-wheels.json')
+        before = {p: p.read_bytes() for p in paths}
+        with mock.patch.object(helper, 'RECIPE', self.recipe), \
+                mock.patch.object(helper.urllib.request, 'urlopen', side_effect=self.response):
+            default_source, default_wheels = helper.fetch(self.cache)
+            source, wheels = helper.fetch(self.cache, upstream_file=upstream, lock_file=lock)
+        self.assertNotEqual(source, default_source)
+        self.assertNotEqual(wheels, default_wheels)
+        self.assertEqual(source.parent.parent, self.cache / 'inputs')
+        self.assertEqual((wheels / self.filename).read_bytes(), (default_wheels / self.filename).read_bytes())
+        self.assertEqual(before, {p: p.read_bytes() for p in paths})
 
     def test_missing_pypi_wheel_identity_is_rejected(self):
         self.meta["urls"][0]["digests"]["sha256"] = "0" * 64

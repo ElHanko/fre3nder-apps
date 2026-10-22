@@ -15,8 +15,9 @@ source pins, dependency locks and validation remain in use.
 `scripts/stage_fre3app.py` supplies the small shared staging operation: copy the
 named recipe files, let the existing app code prepare the payload, validate the
 result and replace the destination. The previous destination survives preparation
-or validation failure. Output must be separate from the recipe. The helper does
-not render manifests, resolve dependencies, build archives or sign anything.
+or validation failure. Output must be separate from the recipe and supplied build
+inputs. The helper does not render manifests, resolve dependencies, build archives
+or sign anything.
 
 Only `manifest.toml.in`, `service` and the files named by each preparer are copied
 from the recipe. In particular, recipe scripts, tests, README files, caches,
@@ -30,6 +31,64 @@ Default package sources live under ignored root `local/`. Caches keep their
 existing ignored locations, including `apps/doom/local/`. Existing ignored
 `apps/<app>/payload/` directories are not used by these build entrypoints.
 `apps/dummy/payload/` remains a tracked generic test fixture.
+
+## Selected build inputs
+
+The existing preparers accept optional files in the existing JSON formats:
+
+| Tool | Optional inputs |
+| --- | --- |
+| Fluidd `prepare-fluidd` | `--upstream FILE`, existing `--archive FILE` |
+| Moonraker `fetch-moonraker-inputs` | `--upstream FILE`, `--lock FILE`, existing `--cache DIR` |
+| Moonraker `prepare-moonraker` | `--upstream FILE`, `--lock FILE`; existing required `--source DIR`, `--wheels DIR` |
+| OctoApp `prepare-octoapp` | `--upstream FILE`, `--lock FILE`, `--requirements FILE`; existing `--source DIR`, `--wheel-dir DIR`, required `--buildroot-output DIR` |
+| Doom `build-doom` | `--upstream FILE`; existing `--prepare-only`, `--package-output DIR` |
+
+Absent options retain the maintained recipe inputs and default paths. Selected
+input files are read once as bytes, checked as regular files without private-key
+material, and never written. `package_stage(..., files=..., overrides=...)`
+accepts byte snapshots only for explicitly declared recipe members. Preparers use
+the same snapshots for payload preparation and the root `upstream.json`,
+`python-wheels.json` and, for OctoApp, `requirements.in`. No alternate recipe or
+dependency resolver is introduced. `protected=...` prevents the output directory
+from replacing, containing or being inside supplied inputs.
+
+When the selected bytes differ from the maintained inputs, default output moves
+to `local/<app>/inputs/<sha256>/package/`. The digest covers destination names and
+the full selected input bytes, independently of their host paths. Fluidd download
+caches and Moonraker fetch caches use the corresponding `inputs/<sha256>/`
+namespace; Doom uses `apps/doom/local/sources/<sha256>/`. Different input sets
+therefore retain separate caches and default outputs. Identical inputs reuse
+their existing location. Explicit `--output DIR` (Doom: `--package-output DIR`)
+still selects a destination to replace after success; use separate destinations
+for builds that must coexist. These paths are not a concurrent-build locking
+protocol.
+
+For selected inputs, `licenses/UPSTREAM` is prefixed to identify its existing
+concrete pin/version notices as the maintained recipe baseline. The selected
+root JSON files and generated payload provenance describe the actual build.
+License texts, source attachments and integration files remain in the allowlist.
+Overrides do not establish redistribution rights: review the selected upstream
+and dependency licenses before publication, including changes from the baseline.
+
+Fluidd still consumes an official release ZIP, checks size/hash and the embedded
+owner, project and version, and validates the source/license URL identity. It
+does not build arbitrary commits with Node. Moonraker consumes a clean checkout
+at the selected commit and locked Python 3.12 universal wheels. Moonraker and
+OctoApp copy tracked source files only; ignored local files cannot enter the
+payload. OctoApp still requires Python 3.12, matching lock/requirements, a source
+`[project]` named `OctoApp` at the selected version, a compatible integration
+patch, and native bundles passing the existing hash/ABI checks. Alternate native
+dependency definitions or bundles are not exposed as overrides. Pillow,
+pycryptodome and pycryptodomex cannot be reintroduced through the universal-wheel
+lock. A new upstream that needs another patch, dependency target or native ABI
+requires recipe work.
+The services check the selected signed upstream metadata against the payload
+release/runtime metadata instead of fixed Fluidd/OctoApp version constants.
+
+Fre3nderScreen continues to import the platform artifact and its provenance; no
+competing Screen pin is added. Package version/serial are separate inputs to
+the generic builder; selecting another upstream never changes them automatically.
 
 ## Package membership before and after
 
@@ -90,6 +149,32 @@ apps/fre3nderscreen/scripts/prepare-fre3nderscreen --artifact <release-artifact>
 scripts/build-fre3app local/fre3nderscreen/package --key <existing-signing-key>
 ```
 
+Examples with reviewed external inputs and explicit staging destinations:
+
+```sh
+apps/fluidd/scripts/prepare-fluidd --upstream <fluidd-upstream.json> \
+  --archive <fluidd-release.zip> --output local/fluidd/selected-package
+
+apps/moonraker/scripts/fetch-moonraker-inputs \
+  --upstream <moonraker-upstream.json> --lock <moonraker-wheels.json>
+# Use the SOURCE and WHEELS paths printed by the fetcher:
+apps/moonraker/scripts/prepare-moonraker \
+  --upstream <moonraker-upstream.json> --lock <moonraker-wheels.json> \
+  --source <printed-source> --wheels <printed-wheels> \
+  --output local/moonraker/selected-package
+
+apps/octoapp/scripts/prepare-octoapp \
+  --upstream <octoapp-upstream.json> --lock <octoapp-wheels.json> \
+  --requirements <octoapp-requirements.in> --source <clean-checkout> \
+  --wheel-dir <locked-wheels> --buildroot-output <buildroot-output> \
+  --output local/octoapp/selected-package
+```
+
+These preparation commands need no signing key. They do not resolve dependencies
+or build native components. After separate signing authorization, use the same
+generic builder with the selected package source and reviewed version/serial
+pair; see [release metadata](package-layout.md#release-metadata).
+
 Doom can stop after its existing cross-build and staging:
 
 ```sh
@@ -105,15 +190,23 @@ same generic package builder with their prepared package source.
 ## Host regression tests
 
 ```sh
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests \
+  -p test_build_fre3app.py -k Manifest -k Metadata -v
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p test_stage_fre3app.py -v
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p test_docker_repository.py -v
 for app in fluidd moonraker octoapp doom fre3nderscreen; do
   PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s "apps/$app/tests" -v || exit
 done
 ```
 
-Package signature tests use temporary test keys only. Cross-build and wrapper
-fixtures stub target builds; these tests do not authorize a production build,
-signing operation or printer action.
+These commands exclude `BuildFre3AppTests`, which generates temporary signing
+keys and requires separate authorization. `PackageMetadataTests` simulates the
+fingerprint and signature: it checks checksums, metadata, CLI forwarding and a
+default archive golden hash from commit `15ef264` without running OpenSSL. It
+does not constitute a cryptographic signature verification. App fixtures test
+selected input snapshots, rejection of incompatible inputs, cache separation
+and preservation of prior staging on failure. Cross-build and wrapper fixtures
+stub target builds; no Docker builds or printer actions are performed.
 
 ## Coordinated consumers and remaining work
 
@@ -127,7 +220,14 @@ wrappers retain the PASS/Package receipt consumed by the platform.
 The optional Docker repository still consumes only already signed archives via
 `incoming/`; its image, configuration, keys and index contract are unchanged.
 
-Later work can add immutable upstream/lock overrides, release metadata overrides,
-and automatic serial allocation. Full isolation of foreign builds from publisher
-keys, including the existing native Buildroot mounts, remains separate work.
-This staging change alone is not a sandbox for upstream code.
+The optional inputs preserve the platform consumers' default invocations; no
+platform consumer change is required for these optional CLI additions.
+
+Later work must isolate foreign builds from publisher keys and the trusted
+signing process: limit OctoApp Buildroot mounts to required inputs, remove key
+directories from build containers, keep dependency/source processing unprivileged,
+and pass a reviewed immutable staging artifact to signing. The current shared
+native bundle locations and existing native build wrapper are not a sandbox or
+independent concurrent native-build environments. Serial allocation and preventing
+reuse across builds require a future persistent repository build history. Neither
+an upstream override nor the generic builder allocates a serial automatically.

@@ -2,6 +2,9 @@
 
 import importlib.machinery
 import importlib.util
+import json
+import io
+from contextlib import redirect_stderr
 from unittest import mock
 import pathlib
 import shutil
@@ -128,6 +131,29 @@ class DoomRecipeTests(unittest.TestCase):
         self.assertEqual(len(info["commit"]), 40)
         self.assertEqual(info["source_subdirectory"], "doomgeneric")
 
+    def test_changed_upstream_blocks_stable_and_implicit_development_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = pathlib.Path(directory)
+            selected = base / 'upstream.json'
+            selected.write_text(json.dumps(dict(build_doom.upstream_info(), commit='b' * 40)))
+            for mode, message in (
+                ([], '--prepare-only'),
+                (['--develop'], 'explicit new --version'),
+                (['--develop', '--version', build_doom.development_version()], 'explicit new --version'),
+            ):
+                errors = io.StringIO()
+                with self.subTest(mode=mode), \
+                        mock.patch.object(sys, 'argv', ['build-doom', '--without-wads', '--upstream', str(selected), *mode]), \
+                        mock.patch.object(build_doom, 'ensure_git_ignore'), \
+                        mock.patch.object(build_doom, 'obtain_source') as obtain, \
+                        mock.patch.object(build_doom, 'run') as run, \
+                        mock.patch.object(pathlib.Path, 'is_file', side_effect=AssertionError('tool or key accessed')), \
+                        redirect_stderr(errors):
+                    self.assertEqual(build_doom.main(), 1)
+                    self.assertIn(message, errors.getvalue())
+                    obtain.assert_not_called()
+                    run.assert_not_called()
+
     def test_prepare_only_stages_sources_without_a_key_or_real_compiler(self):
         with tempfile.TemporaryDirectory() as directory:
             base = pathlib.Path(directory)
@@ -158,7 +184,7 @@ class DoomRecipeTests(unittest.TestCase):
 
             with mock.patch.object(build_doom, "APP", app), \
                     mock.patch.object(build_doom, "ensure_git_ignore"), \
-                    mock.patch.object(build_doom, "obtain_source", return_value=source), \
+                    mock.patch.object(build_doom, "obtain_source", return_value=source) as obtain, \
                     mock.patch.object(build_doom, "check_binary"), \
                     mock.patch.object(build_doom, "run", side_effect=fake_make) as run, \
                     mock.patch.object(sys, "argv", ["build-doom", "--prepare-only", "--without-wads",
@@ -166,6 +192,37 @@ class DoomRecipeTests(unittest.TestCase):
                         "--key", str(base / "nonexistent-key")]):
                 self.assertEqual(build_doom.main(), 0)
                 run.assert_called_once()
+                default = (app / 'upstream.json').read_bytes()
+                selected = base / 'selected-upstream.json'
+                info = dict(json.loads(default), commit='b' * 40)
+                selected.write_text(json.dumps(info))
+                sys.argv.extend(['--upstream', str(selected)])
+                self.assertEqual(build_doom.main(), 0)
+                self.assertEqual((output / 'upstream.json').read_bytes(), selected.read_bytes())
+                self.assertEqual((app / 'upstream.json').read_bytes(), default)
+                self.assertEqual(obtain.call_args.args[1], info)
+                self.assertTrue(obtain.call_args.args[0].is_relative_to(app / 'local/sources'))
+                sys.argv.remove('--prepare-only')
+                sys.argv.extend(['--develop', '--version', '0.1.0-fre3nder.0.2'])
+                original_is_file = pathlib.Path.is_file
+
+                def fixture_is_file(path):
+                    return path == base / 'nonexistent-key' or original_is_file(path)
+
+                def fake_build_and_sign(*args, **kwargs):
+                    if args[0] == 'make':
+                        return fake_make(*args, **kwargs)
+                    self.assertEqual(args[0], str(ROOT / 'scripts/build-fre3app'))
+                    return 'fixture.fre3app'
+
+                run.reset_mock()
+                run.side_effect = fake_build_and_sign
+                with mock.patch.object(pathlib.Path, 'is_file', fixture_is_file):
+                    self.assertEqual(build_doom.main(), 0)
+                self.assertEqual(run.call_count, 2)
+                command = run.call_args.args
+                self.assertIn('--develop', command)
+                self.assertEqual(command[command.index('--version') + 1], '0.1.0-fre3nder.0.2')
             self.assertEqual({p.relative_to(output).as_posix() for p in output.rglob("*") if p.is_file()}, {
                 "manifest.toml.in", "service", "upstream.json", "licenses/UPSTREAM", "licenses/LICENSE.doomgeneric",
                 "payload/bin/doom", "source/doomgeneric/Makefile.linuxvt", "source/doomgeneric/doomgeneric.c",

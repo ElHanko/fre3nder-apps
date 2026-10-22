@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import tomllib
 import unittest
+from unittest import mock
 import zipfile
 
 
@@ -93,7 +94,7 @@ class DevelopmentManifestPolicyTests(unittest.TestCase):
 
     def test_invalid_mode_combinations(self):
         version = "2026.1.14cd415-fre3nder.0.fd679a9"
-        with self.assertRaisesRegex(ValueError, "--version requires --develop"):
+        with self.assertRaisesRegex(ValueError, "requires both --version and --release-serial"):
             self.render_manifest(self.source, self.fingerprint, version=version)
         with self.assertRaisesRegex(ValueError, "requires a valid --version"):
             self.render_manifest(self.source, self.fingerprint, develop=True)
@@ -144,6 +145,125 @@ class DevelopmentManifestPolicyTests(unittest.TestCase):
                         self.source, self.fingerprint, develop=True,
                         version="2026.1.14cd415-fre3nder.0.fd679a9",
                     )
+
+
+class StableManifestPolicyTests(unittest.TestCase):
+    setUp = DevelopmentManifestPolicyTests.setUp
+
+    def test_stable_override_changes_only_version_and_serial(self):
+        release = tomllib.loads(self.render_manifest(self.source, self.fingerprint).decode())
+        selected = tomllib.loads(self.render_manifest(
+            self.source, self.fingerprint, version='2.0.0-fre3nder.5', release_serial=5).decode())
+        release['app'].update(version='2.0.0-fre3nder.5', release_serial=5)
+        self.assertEqual(selected, release)
+        self.assertEqual((self.source / 'manifest.toml.in').read_text(), self.template)
+
+    def test_invalid_stable_and_development_combinations(self):
+        for options in (
+            {'release_serial': 5}, {'version': '2.0'},
+            {'version': '2.0', 'release_serial': 0},
+            {'version': '2.0', 'release_serial': -1},
+            {'version': '2.0', 'release_serial': True},
+            {'version': '', 'release_serial': 5},
+            {'version': 'x' * 129, 'release_serial': 5},
+            {'version': 'bad\nversion', 'release_serial': 5},
+            {'develop': True, 'version': '2-fre3nder.0.1', 'release_serial': 5},
+        ):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                self.render_manifest(self.source, self.fingerprint, **options)
+
+
+class PackageMetadataTests(unittest.TestCase):
+    """Exercise archive construction with simulated crypto, without any keys."""
+
+    def setUp(self):
+        self.module = runpy.run_path(str(BUILDER))
+        self.build = self.module['build']
+        self.globals = self.build.__globals__
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.output = pathlib.Path(temp.name) / 'fixture.fre3app'
+
+    def signature(self, *args):
+        self.assertEqual(args[:3], ('pkeyutl', '-sign', '-rawin'))
+        self.assertEqual(args[args.index('-inkey') + 1], 'unused-key')
+        pathlib.Path(args[args.index('-out') + 1]).write_bytes(b'x' * 64)
+
+    def package(self, **options):
+        with mock.patch.dict(self.globals, publisher_fingerprint=lambda key: 'a' * 64,
+                             openssl=self.signature):
+            self.build(DUMMY, pathlib.Path('unused-key'), self.output, **options)
+        with zipfile.ZipFile(self.output) as archive:
+            manifest = tomllib.loads(archive.read('manifest.toml').decode())
+            sums = archive.read('SHA256SUMS').decode().splitlines()
+            self.assertEqual(archive.read('SHA256SUMS.sig'), b'x' * 64)
+            for line in sums:
+                digest, name = line.split('  ')
+                self.assertEqual(hashlib.sha256(archive.read(name)).hexdigest(), digest)
+        return manifest
+
+    def test_default_bytes_match_pre_override_builder(self):
+        self.package()
+        # Golden produced by 15ef264 with the same fixed fingerprint/signature.
+        self.assertEqual(hashlib.sha256(self.output.read_bytes()).hexdigest(),
+                         'f0c3e282958fdaea4d6bab2e684bf37992fc97a97a97d89e4be311cc6ed7da27')
+
+    def test_stable_and_development_archives_use_selected_metadata(self):
+        manifest = self.package(version='2.0-fre3nder.5', release_serial=5)
+        self.assertEqual(manifest['app']['version'], '2.0-fre3nder.5')
+        self.assertEqual(manifest['app']['release_serial'], 5)
+        manifest = self.package(develop=True, version='2.0-fre3nder.0.1')
+        self.assertEqual(manifest['app']['release_serial'], 0)
+
+    def test_cli_forwards_release_metadata(self):
+        with mock.patch.dict(self.module['main'].__globals__, build=mock.Mock(return_value=self.output)), \
+                mock.patch('sys.argv', ['build-fre3app', str(DUMMY), '--key', 'unused-key',
+                                      '--version', '2.0', '--release-serial', '5']):
+            self.assertEqual(self.module['main'](), 0)
+            self.module['main'].__globals__['build'].assert_called_once_with(
+                DUMMY, pathlib.Path('unused-key'), None, False, '2.0', 5)
+
+    def test_invalid_mode_is_rejected_before_key_access(self):
+        with mock.patch.dict(self.globals, publisher_fingerprint=mock.Mock(side_effect=AssertionError('key accessed'))):
+            with self.assertRaises(ValueError):
+                self.build(DUMMY, pathlib.Path('unused-key'), self.output, version='incomplete')
+
+    def test_unsafe_override_versions_are_rejected_before_key_access(self):
+        for version in ('1/2', '1\\2', '1 2', '../escape', '/absolute',
+                        '1/../../escape', '1\t2', '1\n2', '.1', '-1', '_1', '1.ä'):
+            for develop in (False, True):
+                selected = version + '-fre3nder.0.1' if develop else version
+                options = {'develop': develop, 'version': selected}
+                if not develop:
+                    options['release_serial'] = 5
+                with self.subTest(version=selected, develop=develop), \
+                        mock.patch.dict(self.globals, publisher_fingerprint=mock.Mock(
+                            side_effect=AssertionError('key accessed'))):
+                    with self.assertRaises(ValueError):
+                        self.build(DUMMY, pathlib.Path('unused-key'), self.output, **options)
+                    self.globals['publisher_fingerprint'].assert_not_called()
+                    self.assertFalse(self.output.exists())
+
+    def test_unsafe_template_versions_are_rejected_before_key_access(self):
+        import json
+        source = self.output.parent / 'source'
+        source.mkdir()
+        template = (DUMMY / 'manifest.toml.in').read_text()
+        for version in ('1/2', '1\\2', '1 2', '../escape', '/absolute', '1/../../escape'):
+            (source / 'manifest.toml.in').write_text(template.replace(
+                '"1.0.0-fre3nder.1"', json.dumps(version)))
+            with self.subTest(version=version), \
+                    mock.patch.dict(self.globals, publisher_fingerprint=mock.Mock(
+                        side_effect=AssertionError('key accessed'))):
+                with self.assertRaisesRegex(ValueError, 'version is invalid'):
+                    self.build(source, pathlib.Path('unused-key'), self.output)
+                self.globals['publisher_fingerprint'].assert_not_called()
+
+    def test_repository_version_characters_are_accepted(self):
+        for options in ({'version': 'A1.2+local_build-fre3nder.5', 'release_serial': 5},
+                        {'version': 'A1.2+local_build-fre3nder.0.1', 'develop': True}):
+            with self.subTest(options=options):
+                self.assertEqual(self.package(**options)['app']['version'], options['version'])
 
 
 class BuildFre3AppTests(unittest.TestCase):

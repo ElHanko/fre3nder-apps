@@ -18,7 +18,7 @@ import tomllib
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
-from stage_fre3app import package_stage
+from stage_fre3app import checked_file, input_digest, package_stage
 
 APP = ROOT / "apps/doom"
 IWAD_NAMES = ("DOOM.WAD", "DOOM2.WAD", "TNT.WAD", "PLUTONIA.WAD")
@@ -41,13 +41,18 @@ def ensure_git_ignore() -> None:
         raise ValueError("apps/doom/local/ must be gitignored before the build")
 
 
-def upstream_info() -> dict:
-    info = json.loads((APP / "upstream.json").read_text(encoding="utf-8"))
+def upstream_info(info: dict | None = None) -> dict:
+    if info is None:
+        info = json.loads(checked_file(APP / "upstream.json"))
+    if not isinstance(info, dict) or info.get('schema') != 1 or info.get('project') != 'DoomGeneric':
+        raise ValueError("invalid DoomGeneric upstream definition")
     commit = info.get("commit", "")
-    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+    if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ValueError("invalid pinned DoomGeneric commit")
     if info.get("repository") != "https://github.com/ozkl/doomgeneric.git":
         raise ValueError("unexpected upstream repository")
+    if info.get("source_subdirectory") != "doomgeneric" or info.get("license") != "GPL-2.0-or-later":
+        raise ValueError("unexpected upstream source layout or license")
     return info
 
 
@@ -171,7 +176,8 @@ def main() -> int:
     parser.add_argument("--key", type=pathlib.Path,
                         default=ROOT / "../fre3nder/local/production/keys/apps/private.pem")
     parser.add_argument("--output", type=pathlib.Path)
-    parser.add_argument("--package-output", type=pathlib.Path, default=ROOT / "local/doom/package",
+    parser.add_argument("--upstream", type=pathlib.Path, help="alternative upstream definition")
+    parser.add_argument("--package-output", type=pathlib.Path,
                         help="prepared package source directory")
     parser.add_argument("--prepare-only", action="store_true",
                         help="cross-build and stage without reading a signing key or signing")
@@ -188,7 +194,23 @@ def main() -> int:
         if args.version is not None and not args.develop:
             raise ValueError("--version requires --develop")
         ensure_git_ignore()
-        info = upstream_info()
+        default = checked_file(APP / "upstream.json")
+        inputs = {"upstream.json": checked_file(args.upstream) if args.upstream else default}
+        info = upstream_info(json.loads(inputs["upstream.json"]))
+        changed = inputs["upstream.json"] != default
+        if changed and not args.prepare_only:
+            if not args.develop:
+                raise ValueError("changed Doom upstream requires --prepare-only, then separate signing "
+                                 "with an explicit new stable version and release serial")
+            if not args.version or args.version == development_version():
+                raise ValueError("changed Doom upstream requires an explicit new --version for development")
+        identity = input_digest(inputs)
+        package_output = args.package_output or (ROOT / "local/doom/inputs" / identity / "package"
+                                                if changed else ROOT / "local/doom/package")
+        if changed:
+            inputs["licenses/UPSTREAM"] = (
+                b"Maintained recipe baseline notices; selected build provenance is in upstream.json.\n\n"
+                + checked_file(APP / "licenses/UPSTREAM"))
         local = APP / "local"
         local.mkdir(parents=True, exist_ok=True)
         if local.is_symlink():
@@ -201,10 +223,12 @@ def main() -> int:
                 raise ValueError(f"missing Buildroot cross-tool: {tool}")
         if not args.prepare_only and not args.key.is_file():
             raise ValueError(f"signing key missing: {args.key}")
-        upstream = obtain_source(local / "upstream", info)
         with tempfile.TemporaryDirectory(prefix="doom-build-", dir=local) as temp, \
-                package_stage(APP, args.package_output,
-                              files=("upstream.json", "licenses/UPSTREAM")) as stage:
+                package_stage(APP, package_output,
+                              files=("upstream.json", "licenses/UPSTREAM"), overrides=inputs,
+                              protected=(args.upstream, args.buildroot_output, local / "iwads",
+                                         local / "upstream", local / "sources")) as stage:
+            upstream = obtain_source(local / "sources" / identity if changed else local / "upstream", info)
             temp = pathlib.Path(temp)
             inventory = stage_package(upstream, stage, with_wads=args.with_wads)
             source_dir = stage / "source/doomgeneric"
@@ -219,9 +243,9 @@ def main() -> int:
                 raise ValueError("cross-compiler did not produce Doom binary")
             check_binary(binary, readelf)
         if args.prepare_only:
-            print(f"Prepared: {args.package_output}")
+            print(f"Prepared: {package_output}")
             return 0
-        command = package_command(args.package_output, args.key, args.output,
+        command = package_command(package_output, args.key, args.output,
                                   args.develop, args.version,
                                   with_wads=args.with_wads)
         package = run(*command, cwd=ROOT)

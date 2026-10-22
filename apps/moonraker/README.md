@@ -32,11 +32,21 @@ The fetcher reuses matching cached inputs, rejects modifications, and does not
 prepare payloads or sign packages. The offline `prepare-moonraker` workflow above
 remains available when the source checkout and wheels are supplied separately.
 
+Both commands also accept `--upstream FILE --lock FILE`. Supply the same reviewed
+JSON inputs to the fetcher and preparer. The source commit and wheel lock are
+independent; neither command resolves or upgrades dependencies. With changed
+input bytes, the fetcher prints `SOURCE` and `WHEELS` under
+`local/moonraker/inputs/<sha256>/`; use those printed paths rather than the default
+paths above. The preparer's default output becomes the corresponding
+`inputs/<sha256>/package/`, or select `--output DIR` explicitly. The actual selected
+JSON bytes and generated source/wheel provenance are included in staging.
+
 The preparer works offline, verifies the source commit and wheel hashes, and
 stages `local/moonraker/package/` with the manifest template, service, selected
 provenance/license files and a payload containing source and Python modules.
 `--output DIR` selects the complete package source directory.
-It excludes Git metadata and Python caches. Repeated runs replace the existing
+It copies tracked source files, excluding Git metadata, ignored local files and
+Python caches. Repeated runs replace the existing
 package source only after successful staging; failures preserve the previous
 source. Bundled source and wheels retain their upstream license texts.
 
@@ -46,6 +56,9 @@ Use `scripts/build-fre3app local/moonraker/package --key <official-app-key>` for
 release recipe with a positive, increasing `release_serial`. For a development
 snapshot, use `--develop --version <unique-development-version>`; its serial
 is zero. The checked-in template has release serial `1`.
+For explicitly selected stable metadata, pass both `--version VERSION` and
+`--release-serial N` to that same builder, choosing an unused release identity.
+The maintained template and pins remain unchanged; no serial is assigned for you.
 Building or signing requires explicit operator
 authorization.
 

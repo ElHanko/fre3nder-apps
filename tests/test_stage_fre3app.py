@@ -70,6 +70,35 @@ class PackageSourceTests(unittest.TestCase):
                 raise ValueError("fixture failure")
         self.assertEqual(self.members(), {"manifest.toml.in", "service", "payload/message.txt"})
 
+    def test_selected_input_snapshot_is_staged_without_changing_recipe(self):
+        original = b'{"commit":"maintained"}\n'
+        selected = b'{"commit":"selected"}\n'
+        (self.recipe / 'upstream.json').write_bytes(original)
+        with package_stage(self.recipe, self.output, files=('upstream.json',),
+                           overrides={'upstream.json': selected}) as stage:
+            shutil.copytree(self.recipe / 'payload', stage / 'payload')
+        self.assertEqual((self.output / 'upstream.json').read_bytes(), selected)
+        self.assertEqual((self.recipe / 'upstream.json').read_bytes(), original)
+        with self.assertRaisesRegex(ValueError, 'explicitly selected'):
+            with package_stage(self.recipe, self.output, overrides={'service': b'changed'}):
+                self.fail('undeclared override accepted')
+
+    def test_output_cannot_replace_or_contain_inputs(self):
+        self.prepare()
+        for protected in (self.output / 'input.json', self.root):
+            with self.subTest(protected=protected), self.assertRaisesRegex(ValueError, 'build inputs'):
+                with package_stage(self.recipe, self.output, protected=(protected,)):
+                    self.fail('overlapping output accepted')
+        self.assertTrue((self.output / 'payload/message.txt').is_file())
+
+    def test_private_key_snapshot_is_rejected_without_replacing_output(self):
+        self.prepare()
+        with self.assertRaisesRegex(ValueError, 'private key'):
+            with package_stage(self.recipe, self.output, files=('upstream.json',),
+                               overrides={'upstream.json': b'-----BEGIN ' + b'PRIVATE KEY-----\n'}) as stage:
+                (stage / 'payload').mkdir()
+        self.assertEqual(self.members(), {'manifest.toml.in', 'service', 'payload/message.txt'})
+
     def test_replacement_failure_restores_previous_source(self):
         self.prepare()
         with mock.patch.object(staging["os"], "replace", side_effect=OSError("fixture failure")):

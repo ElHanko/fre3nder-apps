@@ -7,18 +7,25 @@ import sys
 
 
 def healthy():
-    payload = Path(os.environ["FRE3NDER_APP_RUNTIME_DIR"]) / "payload"
+    runtime = Path(os.environ["FRE3NDER_APP_RUNTIME_DIR"])
+    payload = runtime / "payload"
+    upstream_file = runtime / "upstream.json"
     index = payload / "index.html"
     info = payload / "release_info.json"
     if index.is_symlink() or not index.is_file() or not index.stat().st_size:
         return False
     if info.is_symlink() or not info.is_file():
         return False
+    if upstream_file.is_symlink() or not upstream_file.is_file():
+        return False
+    upstream = json.loads(upstream_file.read_text())
     data = json.loads(info.read_text())
-    return (isinstance(data, dict)
+    return (isinstance(upstream, dict) and upstream.get("project") == "fluidd-core/fluidd"
+            and isinstance(upstream.get("version"), str) and bool(upstream["version"])
+            and isinstance(data, dict)
             and data.get("project_name") == "fluidd"
             and data.get("project_owner") == "fluidd-core"
-            and data.get("version") == "v1.37.6")
+            and data.get("version") == upstream["version"])
 
 
 action = sys.argv[1] if len(sys.argv) == 2 else ""

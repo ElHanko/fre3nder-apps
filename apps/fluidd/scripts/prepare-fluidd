@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import sys
@@ -16,7 +17,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
-from stage_fre3app import package_stage
+from stage_fre3app import checked_file, input_digest, package_stage
 
 SOURCE = ROOT / "apps/fluidd"
 CACHE_DIR = ROOT / "local/fluidd"
@@ -35,6 +36,24 @@ def format_size(size):
     if size < 1024 * 1024:
         return f"{size / 1024:.1f} KiB"
     return f"{size / (1024 * 1024):.1f} MiB"
+
+
+def validate_upstream(upstream):
+    if (not isinstance(upstream, dict) or upstream.get("project") != "fluidd-core/fluidd"
+            or not isinstance(upstream.get("version"), str)
+            or not re.fullmatch(r"v[0-9][A-Za-z0-9.+_-]{0,126}", upstream["version"])
+            or not isinstance(upstream.get("source_commit"), str)
+            or not re.fullmatch(r"[0-9a-f]{40}", upstream["source_commit"])
+            or upstream.get("license") != "GPL-3.0-only"
+            or type(upstream.get("asset_size")) is not int or upstream["asset_size"] <= 0
+            or not isinstance(upstream.get("asset_sha256"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", upstream["asset_sha256"])):
+        raise ValueError("invalid Fluidd release definition")
+    expected = f"https://github.com/fluidd-core/fluidd/releases/download/{upstream['version']}/fluidd.zip"
+    if upstream.get("asset_url") != expected:
+        raise ValueError("Fluidd archive URL does not match the selected upstream release")
+    if upstream.get("license_source") != f"https://github.com/fluidd-core/fluidd/blob/{upstream['source_commit']}/LICENSE":
+        raise ValueError("Fluidd license source does not match the selected source commit")
 
 
 def verify_archive(path, upstream):
@@ -70,19 +89,20 @@ def download(path, upstream):
         raise ValueError("Fluidd download size mismatch")
 
 
-def cached_archive(upstream):
-    if CACHE_DIR.is_symlink() or (CACHE_DIR.exists() and not CACHE_DIR.is_dir()):
+def cached_archive(upstream, cache_dir=None):
+    cache_dir = CACHE_DIR if cache_dir is None else cache_dir
+    if cache_dir.is_symlink() or (cache_dir.exists() and not cache_dir.is_dir()):
         raise ValueError("Fluidd cache must be a real directory")
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
     # Hash in the name keeps old pins distinct when the upstream version changes.
     filename = f"fluidd-{upstream['version']}-{upstream['asset_sha256'][:12]}.zip"
-    archive = CACHE_DIR / filename
+    archive = cache_dir / filename
     if archive.exists() or archive.is_symlink():
         verify_archive(archive, upstream)
         report(f"cached archive: {archive.name}, SHA-256 OK")
         return archive
     report(f"downloading Fluidd {upstream['version']} ({format_size(upstream['asset_size'])})")
-    with tempfile.TemporaryDirectory(dir=CACHE_DIR, prefix=".fluidd-download-") as tmp:
+    with tempfile.TemporaryDirectory(dir=cache_dir, prefix=".fluidd-download-") as tmp:
         temporary = Path(tmp) / "fluidd.zip"
         download(temporary, upstream)
         verify_archive(temporary, upstream)
@@ -160,13 +180,30 @@ def prepare(archive_path, destination, upstream):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--archive", type=Path, help="use an already downloaded archive")
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="prepared package source directory")
+    parser.add_argument("--upstream", type=Path, help="external release definition")
+    parser.add_argument("--output", type=Path, help="prepared package source directory")
     args = parser.parse_args()
-    upstream = json.loads((SOURCE / "upstream.json").read_text())
-    archive = args.archive if args.archive is not None else cached_archive(upstream)
-    with package_stage(SOURCE, args.output, files=PACKAGE_FILES) as stage:
+    default = checked_file(SOURCE / "upstream.json")
+    selected = checked_file(args.upstream) if args.upstream is not None else default
+    inputs = {"upstream.json": selected}
+    upstream = json.loads(selected)
+    validate_upstream(upstream)
+    changed = selected != default
+    identity = input_digest(inputs)
+    output = args.output or (CACHE_DIR / "inputs" / identity / "package" if changed else DEFAULT_OUTPUT)
+    cache = CACHE_DIR / "inputs" / identity if changed else CACHE_DIR
+    archive = args.archive if args.archive is not None else (
+        cache / f"fluidd-{upstream['version']}-{upstream['asset_sha256'][:12]}.zip")
+    if changed:
+        inputs["licenses/UPSTREAM"] = (
+            b"Maintained recipe baseline notices; selected build provenance is in upstream.json.\n\n"
+            + checked_file(SOURCE / "licenses/UPSTREAM"))
+    with package_stage(SOURCE, output, files=PACKAGE_FILES, overrides=inputs,
+                       protected=(args.upstream, archive)) as stage:
+        if args.archive is None:
+            archive = cached_archive(upstream, cache)
         prepare(archive, stage / "payload", upstream)
-    report(f"ready: {args.output}")
+    report(f"ready: {output}")
 
 
 if __name__ == "__main__":

@@ -74,6 +74,23 @@ reading a signing key or signing. The package source defaults to ignored
 passes that source to the unchanged generic builder. Cross-build authorization
 is still required. See [the staging contract](../../docs/package-staging.md).
 
+`--upstream FILE` selects another DoomGeneric commit using the existing upstream
+JSON fields. Repository identity, GPL license, source layout, backend inventory
+and target binary checks remain required. The selected file is read without
+modification and included in staging alongside the GPL source attachment. Changed
+inputs use `apps/doom/local/sources/<sha256>/`; package output defaults to
+`local/doom/inputs/<sha256>/package/`. `--package-output` selects another package
+destination without changing that source cache.
+
+Changed upstream inputs cannot be signed directly as stable packages by this
+wrapper. Use `--prepare-only` and then the generic
+builder's `--version VERSION --release-serial N` after the corresponding build
+and signing authorizations, choosing a new stable identity. Development signing
+with changed inputs requires an explicit, unused `--version` different from the
+default `0.1.0-fre3nder.0.1`. Unchanged inputs retain the existing defaults.
+The wrapper keeps its development-only `--version` semantics and allocates no
+new identity automatically.
+
 ## Runtime and game selection
 
 Doom uses the first available source for the selected filename:
