@@ -24,11 +24,17 @@ file on a compatible Fre3nder system.
 The builder never creates signing keys. Supply an existing Ed25519 private key:
 
 ```sh
-scripts/build-fre3app apps/dummy \
+python3 scripts/stage_fre3app.py apps/dummy --output local/dummy/package
+scripts/build-fre3app local/dummy/package \
   --key <fre3nder-root>/local/production/keys/apps/private.pem
 ```
 
 The output is written to `dist/` by default.
+
+Recipe directories are not package sources. App preparers assemble explicit,
+keyless package sources under ignored `local/<app>/package/`; only these are
+passed to the builder. See [package staging](docs/package-staging.md) for the
+file inventory, migration and host regression tests.
 
 ## Fluidd
 
@@ -38,13 +44,13 @@ Moonraker does not update its files. On the build host, prepare the pinned
 upstream release before running the normal builder:
 
 ```sh
-scripts/prepare-fluidd
-scripts/build-fre3app apps/fluidd --key <signing-key>
+apps/fluidd/scripts/prepare-fluidd
+scripts/build-fre3app local/fluidd/package --key <signing-key>
 ```
 
 `prepare-fluidd` downloads the exact v1.37.6 asset listed in
 `apps/fluidd/upstream.json`, checks its size and SHA-256, safely extracts it
-into ignored `apps/fluidd/payload/`, and validates `index.html` and
+into `local/fluidd/package/payload/`, and validates `index.html` and
 `release_info.json`. `--archive <file>` uses a previously downloaded archive
 with the same checks. The builder signs every payload file in `SHA256SUMS`.
 
@@ -59,13 +65,14 @@ Build the release package from an existing neutral Fre3nder X2000 app artifact
 and an existing Ed25519 key:
 
 ```sh
-scripts/build-fre3nderscreen-release \
+apps/fre3nderscreen/scripts/build-fre3nderscreen-release \
   --artifact <fre3nder-app-artifact-dir> --key <signing-key>
 ```
 
-The wrapper replaces only the generated Fre3nderScreen payload, calls the
-release importer and generic package builder, and reports the resulting package
-path and SHA-256. It performs no cross-build or deployment. The underlying
+The wrapper calls the release importer, replaces the prepared Fre3nderScreen
+package source after validation, and calls the generic package builder. It
+reports the resulting package path and SHA-256 and performs no cross-build or
+deployment. The underlying
 `prepare-fre3nderscreen` and `build-fre3app` commands are described in the
 [recipe documentation](docs/fre3nderscreen-recipe.md).
 
@@ -78,7 +85,7 @@ to the RootFS.
 For the normal build, use the OctoApp build wrapper:
 
 ```sh
-scripts/build-octoapp
+apps/octoapp/scripts/build-octoapp
 ```
 
 By default it uses the sibling `../fre3nder` checkout for:
@@ -89,7 +96,7 @@ By default it uses the sibling `../fre3nder` checkout for:
 The paths can be overridden explicitly when required:
 
 ```sh
-scripts/build-octoapp \
+apps/octoapp/scripts/build-octoapp \
   --buildroot-output <buildroot-output> \
   --key <signing-key>
 ```
@@ -100,25 +107,25 @@ the reviewed pure-Python dependency lock.
 To rebuild the native pycryptodomex dependency before packaging:
 
 ```sh
-scripts/build-octoapp --refresh-native
+apps/octoapp/scripts/build-octoapp --refresh-native
 ```
 
 To deliberately regenerate the pure-Python dependency lock:
 
 ```sh
-scripts/build-octoapp --refresh-lock
+apps/octoapp/scripts/build-octoapp --refresh-lock
 ```
 
 Both refresh operations can be requested together:
 
 ```sh
-scripts/build-octoapp --refresh-native --refresh-lock
+apps/octoapp/scripts/build-octoapp --refresh-native --refresh-lock
 ```
 
 A custom output path can be supplied with:
 
 ```sh
-scripts/build-octoapp --output <package.fre3app>
+apps/octoapp/scripts/build-octoapp --output <package.fre3app>
 ```
 
 The wrapper orchestrates the existing OctoApp build tools. It does not
@@ -129,15 +136,15 @@ steps.
 The individual tools remain available for development and debugging:
 
 ```sh
-scripts/lock-octoapp
+apps/octoapp/scripts/lock-octoapp
 
-scripts/build-octoapp-native \
+apps/octoapp/scripts/build-octoapp-native \
   --buildroot-output <fre3nder-root>/local/production/work/x2000/buildroot-output-fre3nder
 
-scripts/prepare-octoapp \
+apps/octoapp/scripts/prepare-octoapp \
   --buildroot-output <fre3nder-root>/local/production/work/x2000/buildroot-output-fre3nder
 
-scripts/build-fre3app apps/octoapp --key <signing-key>
+scripts/build-fre3app local/octoapp/package --key <signing-key>
 ```
 
 `prepare-octoapp` checks out the exact upstream commit from

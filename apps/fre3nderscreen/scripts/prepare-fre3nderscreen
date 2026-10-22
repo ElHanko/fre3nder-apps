@@ -9,11 +9,15 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import sys
 import tempfile
 import tomllib
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "scripts"))
+from stage_fre3app import package_stage
+
 RECIPE = ROOT / "apps/fre3nderscreen"
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
@@ -118,9 +122,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact", required=True, type=Path, help="existing Fre3nder artifact app/ directory")
     parser.add_argument("--develop", action="store_true", help="import a development artifact")
-    parser.add_argument("--output", type=Path, default=RECIPE / "payload")
+    parser.add_argument("--output", type=Path, default=ROOT / "local/fre3nderscreen/package",
+                        help="prepared package source directory")
     args = parser.parse_args()
-    prepare(args.artifact, args.output, args.develop)
+    with package_stage(RECIPE, args.output, files=("licenses/UPSTREAM",)) as stage:
+        prepare(args.artifact, stage / "payload", args.develop)
 
 
 if __name__ == "__main__":

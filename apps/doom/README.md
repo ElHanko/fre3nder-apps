@@ -35,7 +35,7 @@ generated. The pinned DoomGeneric checkout is cached in the ignored
 **Personal development build, including any available original IWADs:**
 
 ```sh
-scripts/build-doom --develop --with-wads
+apps/doom/scripts/build-doom --develop --with-wads
 ```
 
 This includes those WADs **inside the signed `.fre3app`**, at
@@ -45,7 +45,7 @@ redistribution**.
 **Development build without game data:**
 
 ```sh
-scripts/build-doom --develop --without-wads
+apps/doom/scripts/build-doom --develop --without-wads
 ```
 
 This builds the engine only. The owner must supply their own IWAD files on the
@@ -61,12 +61,18 @@ Development packages have `release_serial = 0`; the default version is
 choose a **new** version even if you only change which WADs were packaged:
 
 ```sh
-scripts/build-doom --develop --with-wads --version 0.1.0-fre3nder.0.2
+apps/doom/scripts/build-doom --develop --with-wads --version 0.1.0-fre3nder.0.2
 ```
 
 Other options: `--buildroot-output PATH`, `--key PATH`, `--output PATH`. The
 recipe also supports locally building a non-development package by omitting
 `--develop`; this does not authorize or trigger public release of an artifact.
+
+`--prepare-only` runs the same cross-build and explicit source staging without
+reading a signing key or signing. The package source defaults to ignored
+`local/doom/package/`; `--package-output DIR` overrides it. The normal wrapper
+passes that source to the unchanged generic builder. Cross-build authorization
+is still required. See [the staging contract](../../docs/package-staging.md).
 
 ## Runtime and game selection
 

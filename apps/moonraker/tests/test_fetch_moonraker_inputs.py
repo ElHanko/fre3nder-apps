@@ -13,8 +13,8 @@ import unittest
 from unittest import mock
 import zipfile
 
-ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts/fetch-moonraker-inputs"
+ROOT = Path(__file__).resolve().parents[3]
+SCRIPT = ROOT / "apps/moonraker/scripts/fetch-moonraker-inputs"
 loader = importlib.machinery.SourceFileLoader("fetch_moonraker_inputs", str(SCRIPT))
 spec = importlib.util.spec_from_loader(loader.name, loader)
 helper = importlib.util.module_from_spec(spec)

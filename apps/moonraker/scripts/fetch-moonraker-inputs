@@ -16,7 +16,7 @@ import tempfile
 import urllib.parse
 import urllib.request
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 RECIPE = ROOT / "apps/moonraker"
 DEFAULT_CACHE = ROOT / "local/moonraker"
 MAX_METADATA_BYTES = 8 * 1024 * 1024

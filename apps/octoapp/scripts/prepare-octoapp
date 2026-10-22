@@ -18,8 +18,16 @@ import urllib.request
 import zipfile
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "scripts"))
+from stage_fre3app import package_stage
+
 SOURCE = ROOT / "apps/octoapp"
+PACKAGE_FILES = (
+    "upstream.json", "python-wheels.json", "requirements.in", "native-deps.json",
+    "patches/0001-fre3nder-disable-system-config.patch",
+    "licenses/UPSTREAM", "licenses/LICENSE.octoflatbuffers",
+)
 UPSTREAM_FILE = SOURCE / "upstream.json"
 LOCK_FILE = SOURCE / "python-wheels.json"
 REQUIREMENTS_FILE = SOURCE / "requirements.in"
@@ -333,11 +341,13 @@ def extract_wheel(path: Path, destination: Path, installed: set[str]) -> None:
             target.chmod(0o644)
 
 
-def copy_tree_checked(source: Path, destination: Path) -> None:
+def copy_tree_checked(source: Path, destination: Path, *, exclude=()) -> None:
     if source.is_symlink() or not source.is_dir():
         fail(f"dependency source is missing or unsafe: {source}")
     for path in sorted(source.rglob("*")):
         relative = path.relative_to(source)
+        if relative.parts[0] in exclude or "__pycache__" in relative.parts or path.suffix in (".pyc", ".pyo"):
+            continue
         target = destination / relative
         if path.is_symlink():
             fail(f"dependency source contains symlink: {path}")
@@ -526,7 +536,7 @@ def stage_pycryptodomex(
         fail(
             "OctoApp native dependency "
             "bundle missing; run "
-            "scripts/build-octoapp-native first"
+            "apps/octoapp/scripts/build-octoapp-native first"
         )
 
     meta = json.loads(
@@ -642,6 +652,7 @@ def stage_pycryptodomex(
     copy_tree_checked(
         crypto,
         destination / "Cryptodome",
+        exclude=("SelfTest",),
     )
 
     copy_tree_checked(
@@ -655,14 +666,17 @@ def main() -> int:
     parser.add_argument("--buildroot-output", required=True, type=Path)
     parser.add_argument("--source", type=Path)
     parser.add_argument("--wheel-dir", type=Path)
+    parser.add_argument("--output", type=Path, default=ROOT / "local/octoapp/package",
+                        help="prepared package source directory")
     args = parser.parse_args()
     try:
-        prepare(
-            SOURCE / "payload",
-            args.buildroot_output,
-            source=args.source,
-            wheel_dir=args.wheel_dir,
-        )
+        with package_stage(SOURCE, args.output, files=PACKAGE_FILES) as stage:
+            prepare(
+                stage / "payload",
+                args.buildroot_output,
+                source=args.source,
+                wheel_dir=args.wheel_dir,
+            )
     except (
         OSError,
         ValueError,

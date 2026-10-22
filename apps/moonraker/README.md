@@ -15,15 +15,15 @@ SHA256 hashes, upstream URLs and licenses. Supply a clean Git checkout at that
 source commit and a directory containing the locked wheels:
 
 ```sh
-scripts/prepare-moonraker --source <moonraker-checkout> --wheels <wheel-cache>
+apps/moonraker/scripts/prepare-moonraker --source <moonraker-checkout> --wheels <wheel-cache>
 ```
 
 For a fresh clone, the optional input fetcher fills the ignored local cache
 from the pinned Moonraker Git commit and the SHA-256-locked PyPI wheels:
 
 ```sh
-scripts/fetch-moonraker-inputs
-scripts/prepare-moonraker \
+apps/moonraker/scripts/fetch-moonraker-inputs
+apps/moonraker/scripts/prepare-moonraker \
   --source local/moonraker/source \
   --wheels local/moonraker/wheels
 ```
@@ -33,17 +33,20 @@ prepare payloads or sign packages. The offline `prepare-moonraker` workflow abov
 remains available when the source checkout and wheels are supplied separately.
 
 The preparer works offline, verifies the source commit and wheel hashes, and
-stages `apps/moonraker/payload/` with source, Python modules and provenance.
+stages `local/moonraker/package/` with the manifest template, service, selected
+provenance/license files and a payload containing source and Python modules.
+`--output DIR` selects the complete package source directory.
 It excludes Git metadata and Python caches. Repeated runs replace the existing
-payload only after successful staging; failures preserve the previous payload. Bundled source and wheels retain their upstream license texts.
+package source only after successful staging; failures preserve the previous
+source. Bundled source and wheels retain their upstream license texts.
 
 ## Packaging and image integration
 
-Use `scripts/build-fre3app apps/moonraker --key <official-app-key>` for a
+Use `scripts/build-fre3app local/moonraker/package --key <official-app-key>` for a
 release recipe with a positive, increasing `release_serial`. For a development
 snapshot, use `--develop --version <unique-development-version>`; its serial
-is zero. The checked-in bootstrap template is a development recipe until
-release metadata is assigned. Building or signing requires explicit operator
+is zero. The checked-in template has release serial `1`.
+Building or signing requires explicit operator
 authorization.
 
 Supply the resulting official signed package as `moonraker.fre3app` in the

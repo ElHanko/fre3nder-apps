@@ -1,6 +1,6 @@
 #!/bin/sh
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd) || exit 1
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd) || exit 1
 
 cd "$ROOT" || exit 1
 
@@ -14,7 +14,7 @@ OUTPUT=""
 
 usage() {
     cat <<EOF
-Usage: scripts/build-octoapp [options]
+Usage: apps/octoapp/scripts/build-octoapp [options]
 
 Build the pinned OctoApp .fre3app package.
 
@@ -113,41 +113,37 @@ printf 'refresh lock:     %s\n' "$REFRESH_LOCK"
 
 if [ "$REFRESH_LOCK" -eq 1 ]; then
     run "REFRESH DEPENDENCY LOCK" \
-        "$ROOT/scripts/lock-octoapp"
+        "$ROOT/apps/octoapp/scripts/lock-octoapp"
 fi
 
 if [ "$REFRESH_NATIVE" -eq 1 ]; then
     run "BUILD NATIVE DEPENDENCIES" \
-        "$ROOT/scripts/build-octoapp-native" \
+        "$ROOT/apps/octoapp/scripts/build-octoapp-native" \
         --buildroot-output "$BUILDROOT_OUTPUT"
 fi
 
 run "PREPARE PAYLOAD" \
-    "$ROOT/scripts/prepare-octoapp" \
-    --buildroot-output "$BUILDROOT_OUTPUT"
+    "$ROOT/apps/octoapp/scripts/prepare-octoapp" \
+    --buildroot-output "$BUILDROOT_OUTPUT" \
+    --output "$ROOT/local/octoapp/package"
 
 run "TESTS" \
-    python3 -m unittest tests/test_octoapp_recipe.py -v
+    python3 -m unittest discover -s apps/octoapp/tests -v
 
 run "DIFF CHECK" \
     git diff --check -- \
-        apps/octoapp \
-        scripts/build-octoapp \
-        scripts/build-octoapp-native \
-        scripts/lock-octoapp \
-        scripts/prepare-octoapp \
-        tests/test_octoapp_recipe.py
+        apps/octoapp scripts/stage_fre3app.py
 
 if [ -n "$OUTPUT" ]; then
     run "BUILD SIGNED PACKAGE" \
         "$ROOT/scripts/build-fre3app" \
-        apps/octoapp \
+        "$ROOT/local/octoapp/package" \
         --key "$KEY" \
         --output "$OUTPUT"
 else
     run "BUILD SIGNED PACKAGE" \
         "$ROOT/scripts/build-fre3app" \
-        apps/octoapp \
+        "$ROOT/local/octoapp/package" \
         --key "$KEY"
 fi
 

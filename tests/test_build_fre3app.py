@@ -152,6 +152,10 @@ class BuildFre3AppTests(unittest.TestCase):
         self.root = pathlib.Path(self.temp.name)
         self.private = self.root / "private.pem"
         self.public = self.root / "public.pem"
+        self.source = self.root / "package-source"
+        package_stage = runpy.run_path(str(ROOT / "scripts/stage_fre3app.py"))["package_stage"]
+        with package_stage(DUMMY, self.source) as stage:
+            shutil.copytree(DUMMY / "payload", stage / "payload")
         subprocess.run(
             ["openssl", "genpkey", "-algorithm", "Ed25519", "-out", self.private],
             check=True,
@@ -172,7 +176,7 @@ class BuildFre3AppTests(unittest.TestCase):
         return subprocess.run(
             [
                 str(BUILDER),
-                str(DUMMY),
+                str(self.source),
                 "--key",
                 str(self.private),
                 "--output",
@@ -196,6 +200,18 @@ class BuildFre3AppTests(unittest.TestCase):
             hashlib.sha256(first.read_bytes()).digest(),
             hashlib.sha256(second.read_bytes()).digest(),
         )
+
+    def test_staging_preserves_existing_package_bytes(self):
+        staged = self.root / "staged.fre3app"
+        original = self.root / "original.fre3app"
+        result = self.build(staged)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = subprocess.run(
+            [str(BUILDER), str(DUMMY), "--key", str(self.private), "--output", str(original)],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(staged.read_bytes(), original.read_bytes())
 
     def test_package_signature_and_manifest_are_valid(self):
         package = self.root / "dummy.fre3app"

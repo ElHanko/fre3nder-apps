@@ -12,8 +12,8 @@ import tempfile
 import unittest
 
 
-ROOT = Path(__file__).resolve().parents[1]
-WRAPPER = ROOT / "scripts/build-fre3nderscreen-development"
+ROOT = Path(__file__).resolve().parents[3]
+WRAPPER = ROOT / "apps/fre3nderscreen/scripts/build-fre3nderscreen-development"
 SOURCE_RELEASE = "2026.2.14cd415"
 APPS_COMMIT = "4796448"
 FAKE_COMMAND = f"#!{sys.executable}\n" + '''
@@ -21,6 +21,7 @@ import json
 import os
 from pathlib import Path
 import runpy
+import shutil
 import sys
 import tomllib
 
@@ -35,8 +36,13 @@ if command == "prepare-fre3nderscreen":
     artifact = Path(sys.argv[3])
     if (artifact / "mode").read_text() != "development":
         sys.exit(31)
-    payload = Path.cwd() / "apps/fre3nderscreen/payload"
-    assert not payload.exists()
+    assert sys.argv[4] == "--output" and len(sys.argv) == 6
+    source = Path(sys.argv[5])
+    if source.exists():
+        shutil.rmtree(source)
+    source.mkdir(parents=True)
+    shutil.copyfile(Path.cwd() / "apps/fre3nderscreen/manifest.toml.in", source / "manifest.toml.in")
+    payload = source / "payload"
     payload.mkdir()
     (payload / "artifact-manifest.json").write_bytes((artifact / "artifact-manifest.json").read_bytes())
 else:
@@ -84,19 +90,22 @@ class DevelopmentWrapperTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.repo = self.root / "apps repo"
-        scripts = self.repo / "scripts"
+        scripts = self.repo / "apps/fre3nderscreen/scripts"
         scripts.mkdir(parents=True)
+        central_scripts = self.repo / "scripts"
+        central_scripts.mkdir()
         self.wrapper = scripts / WRAPPER.name
         shutil.copyfile(WRAPPER, self.wrapper)
         self.wrapper.chmod(0o755)
         for name in ("prepare-fre3nderscreen", "build-fre3app"):
-            path = scripts / name
+            path = (scripts if name == "prepare-fre3nderscreen" else central_scripts) / name
             path.write_text(FAKE_COMMAND)
             path.chmod(0o755)
         self.recipe = self.repo / "apps/fre3nderscreen"
-        self.recipe.mkdir(parents=True)
+        self.recipe.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / "apps/fre3nderscreen/manifest.toml.in", self.recipe / "manifest.toml.in")
-        self.payload = self.recipe / "payload"
+        self.payload = self.repo / "local/fre3nderscreen/package"
+        self.payload.parent.mkdir(parents=True)
         self.artifact = self.root / "artifact dir"
         self.artifact.mkdir()
         (self.artifact / "mode").write_text("development")
@@ -131,8 +140,8 @@ class DevelopmentWrapperTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         version = SOURCE_RELEASE + "-fre3nder.0." + APPS_COMMIT
         self.assertEqual(self.calls(), [
-            {"command": "prepare-fre3nderscreen", "args": ["--develop", "--artifact", str(self.artifact)]},
-            {"command": "build-fre3app", "args": [str(self.recipe), "--key", str(self.key), "--develop", "--version", version]},
+            {"command": "prepare-fre3nderscreen", "args": ["--develop", "--artifact", str(self.artifact), "--output", str(self.payload)]},
+            {"command": "build-fre3app", "args": [str(self.payload), "--key", str(self.key), "--develop", "--version", version]},
         ])
         app = json.loads(self.app.read_text())
         self.assertEqual(app["version"], version)
@@ -172,7 +181,7 @@ class DevelopmentWrapperTests(unittest.TestCase):
         (self.payload / "outside").symlink_to(self.outside, target_is_directory=True)
         result = self.run_wrapper()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(list(self.payload.iterdir()), [self.payload / "artifact-manifest.json"])
+        self.assertEqual({p.name for p in self.payload.iterdir()}, {"manifest.toml.in", "payload"})
         self.assertEqual((self.outside / "keep").read_text(), "untouched")
 
     def test_unsafe_payload_and_recipe_boundary_are_preserved(self):

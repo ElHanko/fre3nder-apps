@@ -6,12 +6,14 @@ import importlib.util
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import tomllib
 import unittest
+from unittest import mock
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 SOURCE = ROOT / "apps/octoapp"
 
 
@@ -27,7 +29,7 @@ class OctoAppRecipeTests(unittest.TestCase):
     def setUp(self):
         self.prepare = load(
             "prepare_octoapp_test",
-            ROOT / "scripts/prepare-octoapp",
+            ROOT / "apps/octoapp/scripts/prepare-octoapp",
         )
 
     def test_pinned_manifest_and_upstream(self):
@@ -54,7 +56,7 @@ class OctoAppRecipeTests(unittest.TestCase):
         service = (SOURCE / "service").read_text()
         self.assertIn("include-system-site-packages = false", service)
         self.assertNotIn("OCTOAPP_DISABLE_SYSTEM_CONFIG", service)
-        prepare = (ROOT / "scripts/prepare-octoapp").read_text()
+        prepare = (ROOT / "apps/octoapp/scripts/prepare-octoapp").read_text()
         self.assertEqual(
             prepare.count(
                 'system_config = destination / "moonraker_octoapp/systemconfigmanager.py"'
@@ -130,8 +132,8 @@ class OctoAppRecipeTests(unittest.TestCase):
             self.assertNotIn(excluded, joined.lower())
 
     def test_host_tools_do_not_depend_on_system_pip(self):
-        lock_script = (ROOT / "scripts/lock-octoapp").read_text()
-        prepare_script = (ROOT / "scripts/prepare-octoapp").read_text()
+        lock_script = (ROOT / "apps/octoapp/scripts/lock-octoapp").read_text()
+        prepare_script = (ROOT / "apps/octoapp/scripts/prepare-octoapp").read_text()
         self.assertIn('PIP_VERSION = "26.2.1"', lock_script)
         self.assertIn("PIP_SHA256 =", lock_script)
         self.assertIn('env["PYTHONPATH"]', lock_script)
@@ -141,7 +143,7 @@ class OctoAppRecipeTests(unittest.TestCase):
     def test_lock_manifest_matches_recipe_when_present(self):
         lock_path = SOURCE / "python-wheels.json"
         if not lock_path.exists():
-            self.skipTest("run scripts/lock-octoapp before final validation")
+            self.skipTest("run apps/octoapp/scripts/lock-octoapp before final validation")
         upstream = json.loads((SOURCE / "upstream.json").read_text())
         lock = json.loads(lock_path.read_text())
         self.assertEqual(
@@ -166,6 +168,38 @@ class OctoAppRecipeTests(unittest.TestCase):
             self.assertEqual(first, second)
             (root / "two.txt").write_text("changed\n")
             self.assertNotEqual(first, self.prepare.dependency_tree_hash(root))
+
+    def test_package_source_keeps_integration_files_without_recipe_tools(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "package"
+
+            def payload(destination, buildroot_output, **kwargs):
+                destination.mkdir()
+                (destination / "runtime.json").write_text('{"fixture":true}\n')
+
+            with mock.patch.object(self.prepare, "prepare", side_effect=payload), \
+                    mock.patch.object(sys, "argv", ["prepare-octoapp", "--buildroot-output", "unused-fixture",
+                                                   "--output", str(output)]):
+                self.assertEqual(self.prepare.main(), 0)
+            self.assertEqual({p.relative_to(output).as_posix() for p in output.rglob("*") if p.is_file()}, {
+                "manifest.toml.in", "service", "upstream.json", "python-wheels.json", "requirements.in",
+                "native-deps.json", "patches/0001-fre3nder-disable-system-config.patch",
+                "licenses/UPSTREAM", "licenses/LICENSE.octoflatbuffers", "payload/runtime.json",
+            })
+
+    def test_dependency_copy_excludes_caches_and_optional_selftests(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            (source / "__pycache__").mkdir(parents=True)
+            (source / "module.py").write_text("# fixture\n")
+            (source / "module.pyc").write_bytes(b"cache")
+            (source / "__pycache__/module.cpython-312.pyc").write_bytes(b"cache")
+            (source / "SelfTest").mkdir()
+            (source / "SelfTest/key.pem").write_bytes(b"-----BEGIN " + b"PRIVATE KEY-----")
+            output = Path(tmp) / "output"
+            self.prepare.copy_tree_checked(source, output, exclude=("SelfTest",))
+            self.assertEqual({p.relative_to(output).as_posix() for p in output.rglob("*") if p.is_file()},
+                             {"module.py"})
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import unittest
@@ -15,7 +16,7 @@ from unittest import mock
 import zipfile
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / "scripts/prepare-fluidd"
+SCRIPT = Path(__file__).resolve().parents[3] / "apps/fluidd/scripts/prepare-fluidd"
 loader = importlib.machinery.SourceFileLoader("fluidd_cache_test", str(SCRIPT))
 spec = importlib.util.spec_from_loader(loader.name, loader)
 helper = importlib.util.module_from_spec(spec)
@@ -36,6 +37,11 @@ class FluiddCacheTests(unittest.TestCase):
         source.mkdir(parents=True)
         self.source = source
         self.cache = self.root / "local/fluidd"
+        self.package = self.root / "local/fluidd/package"
+        for name in ("manifest.toml.in", "service", *helper.PACKAGE_FILES):
+            target = source / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(helper.SOURCE / name, target)
         archive = io.BytesIO()
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as zipped:
             zipped.writestr("index.html", "<html>Fluidd</html>")
@@ -53,10 +59,13 @@ class FluiddCacheTests(unittest.TestCase):
         (source / "upstream.json").write_text(json.dumps(self.upstream))
         self.source_patch = mock.patch.object(helper, "SOURCE", source)
         self.cache_patch = mock.patch.object(helper, "CACHE_DIR", self.cache)
+        self.output_patch = mock.patch.object(helper, "DEFAULT_OUTPUT", self.package)
         self.source_patch.start()
         self.cache_patch.start()
+        self.output_patch.start()
         self.addCleanup(self.source_patch.stop)
         self.addCleanup(self.cache_patch.stop)
+        self.addCleanup(self.output_patch.stop)
 
     def test_first_run_downloads_second_run_reuses_verified_cache(self):
         logs = io.StringIO()
@@ -69,7 +78,7 @@ class FluiddCacheTests(unittest.TestCase):
         self.assertIn("downloaded 1.0 MiB /", output)
         self.assertIn("download complete, SHA-256 OK", output)
         self.assertIn("ready:", output)
-        payload = self.source / "payload"
+        payload = self.package / "payload"
         self.assertTrue((payload / "index.html").is_file())
         self.assertEqual(len(list(self.cache.glob("*.zip"))), 1)
 
@@ -78,14 +87,18 @@ class FluiddCacheTests(unittest.TestCase):
                 mock.patch.object(sys, "argv", ["prepare-fluidd"]), redirect_stderr(logs):
             helper.main()
         self.assertIn("cached archive:", logs.getvalue())
-        self.assertIn("replacing existing payload", logs.getvalue())
+        self.assertIn("ready:", logs.getvalue())
+        self.assertEqual({p.relative_to(self.package).as_posix() for p in self.package.rglob("*") if p.is_file()}, {
+            "manifest.toml.in", "service", "upstream.json", "licenses/UPSTREAM", "licenses/LICENSE.fluidd",
+            "payload/index.html", "payload/release_info.json", "payload/large-file.bin",
+        })
 
     def test_tampered_cache_is_rejected_without_network_or_payload_change(self):
         with mock.patch.object(helper.urllib.request, "urlopen", return_value=Response(self.data)):
             cached = helper.cached_archive(self.upstream)
         cached.write_bytes(b"tampered")
-        payload = self.source / "payload"
-        payload.mkdir()
+        payload = self.package / "payload"
+        payload.mkdir(parents=True)
         (payload / "marker").write_text("preserve")
         with mock.patch.object(helper.urllib.request, "urlopen", side_effect=AssertionError("network used")), \
                 mock.patch.object(sys, "argv", ["prepare-fluidd"]):
@@ -105,8 +118,8 @@ class FluiddCacheTests(unittest.TestCase):
         with mock.patch.object(helper.urllib.request, "urlopen", side_effect=AssertionError("network used")), \
                 mock.patch.object(sys, "argv", ["prepare-fluidd", "--archive", str(supplied)]):
             helper.main()
-        self.assertTrue((self.source / "payload/index.html").is_file())
-        self.assertFalse(self.cache.exists())
+        self.assertTrue((self.package / "payload/index.html").is_file())
+        self.assertFalse(list(self.cache.glob("*.zip")))
 
     def test_cache_directory_symlink_is_rejected(self):
         target = self.root / "target"

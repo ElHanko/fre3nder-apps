@@ -14,9 +14,14 @@ import urllib.request
 import zipfile
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "scripts"))
+from stage_fre3app import package_stage
+
 SOURCE = ROOT / "apps/fluidd"
 CACHE_DIR = ROOT / "local/fluidd"
+DEFAULT_OUTPUT = ROOT / "local/fluidd/package"
+PACKAGE_FILES = ("upstream.json", "licenses/UPSTREAM", "licenses/LICENSE.fluidd")
 MAX_UNPACKED = 1024 * 1024 * 1024
 
 
@@ -155,11 +160,13 @@ def prepare(archive_path, destination, upstream):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--archive", type=Path, help="use an already downloaded archive")
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="prepared package source directory")
     args = parser.parse_args()
     upstream = json.loads((SOURCE / "upstream.json").read_text())
     archive = args.archive if args.archive is not None else cached_archive(upstream)
-    prepare(archive, SOURCE / "payload", upstream)
-    report(f"ready: {SOURCE / 'payload'}")
+    with package_stage(SOURCE, args.output, files=PACKAGE_FILES) as stage:
+        prepare(archive, stage / "payload", upstream)
+    report(f"ready: {args.output}")
 
 
 if __name__ == "__main__":

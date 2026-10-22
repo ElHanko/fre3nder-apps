@@ -16,7 +16,10 @@ import sys
 import tempfile
 import tomllib
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "scripts"))
+from stage_fre3app import package_stage
+
 APP = ROOT / "apps/doom"
 IWAD_NAMES = ("DOOM.WAD", "DOOM2.WAD", "TNT.WAD", "PLUTONIA.WAD")
 
@@ -111,11 +114,8 @@ def stage_private_iwads(iwads: pathlib.Path, stage: pathlib.Path) -> list[str]:
 def stage_package(source: pathlib.Path, stage: pathlib.Path, *, with_wads: bool) -> str:
     """Explicit allowlist: private WADs enter only with --with-wads."""
     (stage / "payload/bin").mkdir(parents=True)
-    (stage / "licenses").mkdir()
+    (stage / "licenses").mkdir(exist_ok=True)
     (stage / "source/doomgeneric").mkdir(parents=True)
-    for name in ("manifest.toml.in", "service", "upstream.json"):
-        shutil.copy2(APP / name, stage / name)
-    shutil.copy2(APP / "licenses/UPSTREAM", stage / "licenses/UPSTREAM")
     shutil.copy2(source.parent / "LICENSE", stage / "licenses/LICENSE.doomgeneric")
     for file in sorted(source.iterdir()):
         if file.is_symlink():
@@ -171,6 +171,10 @@ def main() -> int:
     parser.add_argument("--key", type=pathlib.Path,
                         default=ROOT / "../fre3nder/local/production/keys/apps/private.pem")
     parser.add_argument("--output", type=pathlib.Path)
+    parser.add_argument("--package-output", type=pathlib.Path, default=ROOT / "local/doom/package",
+                        help="prepared package source directory")
+    parser.add_argument("--prepare-only", action="store_true",
+                        help="cross-build and stage without reading a signing key or signing")
     parser.add_argument("--develop", action="store_true",
                         help="sign a development package with release_serial=0")
     parser.add_argument("--version", help="explicit development version")
@@ -195,13 +199,13 @@ def main() -> int:
         for tool in (cc, readelf):
             if not tool.is_file():
                 raise ValueError(f"missing Buildroot cross-tool: {tool}")
-        if not args.key.is_file():
+        if not args.prepare_only and not args.key.is_file():
             raise ValueError(f"signing key missing: {args.key}")
         upstream = obtain_source(local / "upstream", info)
-        with tempfile.TemporaryDirectory(prefix="doom-build-", dir=local) as temp:
+        with tempfile.TemporaryDirectory(prefix="doom-build-", dir=local) as temp, \
+                package_stage(APP, args.package_output,
+                              files=("upstream.json", "licenses/UPSTREAM")) as stage:
             temp = pathlib.Path(temp)
-            stage = temp / "package"
-            stage.mkdir()
             inventory = stage_package(upstream, stage, with_wads=args.with_wads)
             source_dir = stage / "source/doomgeneric"
             binary = stage / "payload/bin/doom"
@@ -214,14 +218,17 @@ def main() -> int:
             if not binary.is_file():
                 raise ValueError("cross-compiler did not produce Doom binary")
             check_binary(binary, readelf)
-            command = package_command(stage, args.key, args.output,
-                                      args.develop, args.version,
-                                      with_wads=args.with_wads)
-            package = run(*command, cwd=ROOT)
-            print(f"Package: {package}")
-            print("Signed local Doom Fre3app built; " +
-                  ("private IWADs bundled (do not publish)." if args.with_wads else
-                   "no IWADs included."))
+        if args.prepare_only:
+            print(f"Prepared: {args.package_output}")
+            return 0
+        command = package_command(args.package_output, args.key, args.output,
+                                  args.develop, args.version,
+                                  with_wads=args.with_wads)
+        package = run(*command, cwd=ROOT)
+        print(f"Package: {package}")
+        print("Signed local Doom Fre3app built; " +
+              ("private IWADs bundled (do not publish)." if args.with_wads else
+               "no IWADs included."))
         return 0
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         print(f"build-doom: {exc}", file=sys.stderr)

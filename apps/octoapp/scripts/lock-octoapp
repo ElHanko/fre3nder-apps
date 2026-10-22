@@ -17,7 +17,7 @@ import urllib.request
 import zipfile
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 SOURCE = ROOT / "apps/octoapp"
 REQUIREMENTS = SOURCE / "requirements.in"
 DEFAULT_OUTPUT = SOURCE / "python-wheels.json"

@@ -12,11 +12,16 @@ import pathlib
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import zipfile
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "scripts"))
+from stage_fre3app import package_stage
+
 RECIPE = ROOT / "apps/moonraker"
+PACKAGE_FILES = ('upstream.json', 'python-wheels.json', 'licenses/UPSTREAM')
 
 
 def fail(message):
@@ -152,10 +157,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=pathlib.Path, required=True)
     parser.add_argument('--wheels', type=pathlib.Path, required=True)
-    parser.add_argument('--output', type=pathlib.Path, default=RECIPE / 'payload')
+    parser.add_argument('--output', type=pathlib.Path, default=ROOT / 'local/moonraker/package',
+                        help='prepared package source directory')
     args = parser.parse_args()
     try:
-        prepare(args.source.resolve(), args.wheels.resolve(), args.output)
+        with package_stage(RECIPE, args.output, files=PACKAGE_FILES) as stage:
+            prepare(args.source.resolve(), args.wheels.resolve(), stage / 'payload')
     except (OSError, ValueError, subprocess.CalledProcessError, zipfile.BadZipFile) as exc:
         parser.exit(1, f'prepare-moonraker: {exc}\n')
     print(f'PREPARED={args.output}')

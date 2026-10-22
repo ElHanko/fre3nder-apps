@@ -31,8 +31,11 @@ The importer validates the exact file set, mode, source release, ABI, submodule
 provenance, manifest hashes and `SHA256SUMS`. Unexpected files, symlinks and
 unsupported members remain errors. It copies the verified binary, themes,
 license bytes and artifact manifest unchanged into ignored
-`apps/fre3nderscreen/payload/`, adding the packaged default config. It rejects
-an existing output directory. There is no automatic release/development mode
+`local/fre3nderscreen/package/payload/`, adding the packaged default config.
+The complete package source also contains the unchanged manifest template,
+service and `licenses/UPSTREAM`. `--output DIR` selects that package source;
+an existing source is replaced only after successful preparation and validation.
+There is no automatic release/development mode
 selection and no fallback to an old file set.
 
 ## Release package
@@ -46,12 +49,12 @@ with one of them. Packaging does not install or downgrade any app.
 After explicit build/signing approval, from this repository:
 
 ```sh
-scripts/build-fre3nderscreen-release \
+apps/fre3nderscreen/scripts/build-fre3nderscreen-release \
   --artifact <fre3nder-app-artifact-dir> --key <private-ed25519-key>
 ```
 
-The wrapper accepts release artifacts only. It replaces only the generated
-payload, rejecting symlinked recipe boundaries and a non-directory payload,
+The wrapper accepts release artifacts only. It replaces the generated
+package source, rejecting symlinked recipe boundaries and a non-directory source,
 then calls `prepare-fre3nderscreen` and `build-fre3app`. Errors stop the wrapper;
 success reports the package path and SHA-256. It performs no cross-build,
 Factory-seed copy or deployment. Use an existing key; do not generate one for
@@ -90,7 +93,7 @@ Release mode never substitutes a local worktree or `main` for the pin.
 The separately authorized development package command is:
 
 ```sh
-scripts/build-fre3nderscreen-development \
+apps/fre3nderscreen/scripts/build-fre3nderscreen-development \
   --artifact <development-artifact-app-dir> --key <private-ed25519-key>
 ```
 
@@ -104,9 +107,13 @@ Commit-based version strings do not identify pending changes; inspect the source
 worktree hash and package checksum as well. This path does not copy a Factory
 seed or deploy, and never imports a release artifact as development or vice versa.
 
-For non-signing import validation, `scripts/prepare-fre3nderscreen --develop
+For non-signing import validation, `apps/fre3nderscreen/scripts/prepare-fre3nderscreen --develop
 --artifact <artifact-app-dir> --output <unused-temporary-directory>` validates
-and copies an existing Development artifact only; it performs no build.
+and prepares a package source from an existing Development artifact only; it
+performs no build or signing. The [staging inventory](package-staging.md) records
+the deliberate removal of the duplicate root default config. Versions and
+serials remain unchanged; do not republish changed package bytes with an
+existing release identity.
 
 ## Remaining 2026.2 release steps
 

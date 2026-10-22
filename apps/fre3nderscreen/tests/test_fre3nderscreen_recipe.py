@@ -17,10 +17,10 @@ from unittest import mock
 import zipfile
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 RECIPE = ROOT / "apps/fre3nderscreen"
 SERVICE = RECIPE / "service"
-IMPORTER = ROOT / "scripts/prepare-fre3nderscreen"
+IMPORTER = ROOT / "apps/fre3nderscreen/scripts/prepare-fre3nderscreen"
 
 
 class RecipeTests(unittest.TestCase):
@@ -51,7 +51,7 @@ class RecipeTests(unittest.TestCase):
         self.assertEqual(modes["service"], 0o755)
         self.assertEqual(modes["payload/bin/fre3nderscreen"], 0o755)
         self.assertEqual(modes["payload/themes/blue.json"], 0o644)
-        payload = RECIPE / "payload"
+        payload = ROOT / "local/fre3nderscreen/package/payload"
         if payload.exists():
             expected = {
                 "bin/fre3nderscreen",
@@ -67,7 +67,7 @@ class RecipeTests(unittest.TestCase):
             self.assertEqual(actual, expected)
         self.assertEqual(
             subprocess.run(
-                ["git", "check-ignore", "-q", "apps/fre3nderscreen/payload/bin/fre3nderscreen"],
+                ["git", "check-ignore", "-q", "local/fre3nderscreen/package/payload/bin/fre3nderscreen"],
                 cwd=ROOT,
             ).returncode,
             0,
@@ -137,11 +137,15 @@ class RecipeTests(unittest.TestCase):
             write_metadata()
             payload = root / "payload"
             self.assertEqual(import_artifact(payload).returncode, 0)
-            self.assertEqual((payload / "bin/fre3nderscreen").read_bytes(), b"fixture binary")
-            self.assertEqual(json.loads((payload / "artifact-manifest.json").read_text())["artifact_mode"], "release")
+            self.assertEqual((payload / "payload/bin/fre3nderscreen").read_bytes(), b"fixture binary")
+            self.assertEqual(json.loads((payload / "payload/artifact-manifest.json").read_text())["artifact_mode"], "release")
             for name, data in license_bytes.items():
-                self.assertEqual((payload / "licenses" / name).read_bytes(), data)
-            self.assertEqual(import_artifact(payload).returncode, 1)
+                self.assertEqual((payload / "payload/licenses" / name).read_bytes(), data)
+            self.assertEqual({p.relative_to(payload).as_posix() for p in payload.rglob("*") if p.is_file()}, {
+                "manifest.toml.in", "service", "licenses/UPSTREAM", "payload/artifact-manifest.json",
+                "payload/defaults/fre3nderscreen.json", *(f"payload/{name}" for name in files),
+            })
+            self.assertEqual(import_artifact(payload).returncode, 0)
             rejected = root / "rejected"
             # Even a checksummed legacy license is outside the reduced contract.
             legacy_license = "licenses/WPA-SUPPLICANT-LICENSE"
@@ -168,7 +172,7 @@ class RecipeTests(unittest.TestCase):
             self.assertFalse(rejected.exists())
             development_payload = root / "development-payload"
             self.assertEqual(import_artifact(development_payload, develop=True).returncode, 0)
-            self.assertEqual(json.loads((development_payload / "artifact-manifest.json").read_text())["artifact_mode"], "development")
+            self.assertEqual(json.loads((development_payload / "payload/artifact-manifest.json").read_text())["artifact_mode"], "development")
             (artifact / "bin/fre3nderscreen").write_bytes(b"corrupted")
             self.assertNotEqual(import_artifact(rejected, develop=True).returncode, 0)
             self.assertFalse(rejected.exists())

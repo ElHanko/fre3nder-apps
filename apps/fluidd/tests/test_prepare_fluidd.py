@@ -15,7 +15,7 @@ import unittest
 import zipfile
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 SOURCE = ROOT / "apps/fluidd"
 
 
@@ -32,7 +32,7 @@ class FluiddSourceTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.helper = load("prepare_fluidd_test", ROOT / "scripts/prepare-fluidd")
+        self.helper = load("prepare_fluidd_test", ROOT / "apps/fluidd/scripts/prepare-fluidd")
 
     def fixture(self, extra=None):
         path = self.root / "fluidd.zip"

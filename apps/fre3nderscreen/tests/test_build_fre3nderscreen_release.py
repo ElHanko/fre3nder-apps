@@ -11,13 +11,14 @@ import tempfile
 import unittest
 
 
-ROOT = Path(__file__).resolve().parents[1]
-WRAPPER = ROOT / "scripts/build-fre3nderscreen-release"
+ROOT = Path(__file__).resolve().parents[3]
+WRAPPER = ROOT / "apps/fre3nderscreen/scripts/build-fre3nderscreen-release"
 
 FAKE_COMMAND = '''#!/usr/bin/env python3
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 
 command = Path(sys.argv[0]).name
@@ -25,17 +26,18 @@ with Path(os.environ["FIXTURE_CALLS"]).open("a") as log:
     log.write(json.dumps({"command": command, "args": sys.argv[1:],
                           "cwd": str(Path.cwd())}) + "\\n")
 if command == "prepare-fre3nderscreen":
-    assert sys.argv[1] == "--artifact" and len(sys.argv) == 3
+    assert sys.argv[1] == "--artifact" and sys.argv[3] == "--output" and len(sys.argv) == 5
     artifact = Path(sys.argv[2])
     assert artifact.is_dir()
-    payload = Path("apps/fre3nderscreen/payload")
-    assert not payload.exists(), "old payload was not removed"
+    payload = Path(sys.argv[4])
     rc = int(os.environ.get("FIXTURE_PREPARE_RC", "0"))
     if (artifact / "mode").read_text() != "release":
         rc = 31
     if rc:
         sys.exit(rc)
-    payload.mkdir()
+    if payload.exists():
+        shutil.rmtree(payload)
+    payload.mkdir(parents=True)
     (payload / "new").write_text("imported fixture")
 else:
     assert sys.argv[2] == "--key" and len(sys.argv) == 4
@@ -62,19 +64,22 @@ class ReleaseWrapperTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.repo = self.root / "recipe repo"
-        scripts = self.repo / "scripts"
+        scripts = self.repo / "apps/fre3nderscreen/scripts"
         scripts.mkdir(parents=True)
+        central_scripts = self.repo / "scripts"
+        central_scripts.mkdir()
         self.wrapper = scripts / WRAPPER.name
         shutil.copyfile(WRAPPER, self.wrapper)
         self.wrapper.chmod(0o755)
         for name in ("prepare-fre3nderscreen", "build-fre3app"):
-            command = scripts / name
+            command = (scripts if name == "prepare-fre3nderscreen" else central_scripts) / name
             command.write_text(FAKE_COMMAND)
             command.chmod(0o755)
         self.recipe = self.repo / "apps/fre3nderscreen"
-        self.recipe.mkdir(parents=True)
+        self.recipe.mkdir(parents=True, exist_ok=True)
         (self.recipe / "manifest.toml.in").write_text("fixture manifest\n")
-        self.payload = self.recipe / "payload"
+        self.payload = self.repo / "local/fre3nderscreen/package"
+        self.payload.parent.mkdir(parents=True)
         self.artifact = self.root / "artifact dir"
         self.artifact.mkdir()
         (self.artifact / "mode").write_text("release")
@@ -143,9 +148,9 @@ class ReleaseWrapperTests(unittest.TestCase):
         self.assertIn(f"Package:  {self.output}\n", result.stdout)
         self.assertIn(f"SHA256:   {sha256}\n", result.stdout)
         self.assertEqual(self.calls(), [
-            {"command": "prepare-fre3nderscreen", "args": ["--artifact", str(self.artifact)],
+            {"command": "prepare-fre3nderscreen", "args": ["--artifact", str(self.artifact), "--output", str(self.payload)],
              "cwd": str(self.repo)},
-            {"command": "build-fre3app", "args": [str(self.recipe), "--key", str(self.key)],
+            {"command": "build-fre3app", "args": [str(self.payload), "--key", str(self.key)],
              "cwd": str(self.repo)},
         ])
         self.assertFalse(self.key.exists())

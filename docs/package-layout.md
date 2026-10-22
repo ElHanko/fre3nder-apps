@@ -1,6 +1,10 @@
 # Package source layout
 
-Each package source directory contains:
+App preparers assemble a separate package source directory; never pass a recipe
+directory containing development tools to the builder. See
+[the staging contract and per-app inventory](package-staging.md).
+
+Each prepared package source directory contains:
 
 ```text
 manifest.toml.in

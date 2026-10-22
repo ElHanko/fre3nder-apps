@@ -4,11 +4,13 @@ import importlib.machinery
 import importlib.util
 from unittest import mock
 import pathlib
+import shutil
+import sys
 import tempfile
 import unittest
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts/build-doom"
+ROOT = pathlib.Path(__file__).resolve().parents[3]
+SCRIPT = ROOT / "apps/doom/scripts/build-doom"
 loader = importlib.machinery.SourceFileLoader("build_doom", str(SCRIPT))
 spec = importlib.util.spec_from_loader(loader.name, loader)
 build_doom = importlib.util.module_from_spec(spec)
@@ -125,6 +127,50 @@ class DoomRecipeTests(unittest.TestCase):
         info = build_doom.upstream_info()
         self.assertEqual(len(info["commit"]), 40)
         self.assertEqual(info["source_subdirectory"], "doomgeneric")
+
+    def test_prepare_only_stages_sources_without_a_key_or_real_compiler(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = pathlib.Path(directory)
+            app = base / "recipe"
+            for name in ("manifest.toml.in", "service", "upstream.json", "licenses/UPSTREAM",
+                         "src/doomgeneric_fre3nder.c"):
+                target = app / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / "apps/doom" / name, target)
+            upstream = base / "upstream"
+            source = upstream / "doomgeneric"
+            source.mkdir(parents=True)
+            (upstream / "LICENSE").write_text("GPL fixture\n")
+            (source / "Makefile.linuxvt").write_text("SRC_DOOM = doomgeneric.o doomgeneric_linuxvt.o\n")
+            (source / "doomgeneric.c").write_text("/* fixture */\n")
+            buildroot = base / "buildroot"
+            for name in ("gcc", "readelf"):
+                tool = buildroot / "host/bin" / f"mipsel-buildroot-linux-gnu-{name}"
+                tool.parent.mkdir(parents=True, exist_ok=True)
+                tool.write_text("not an executable\n")
+            output = base / "package"
+
+            def fake_make(*args, **kwargs):
+                self.assertEqual(args[0], "make")
+                binary = next(arg.removeprefix("OUTPUT=") for arg in args if arg.startswith("OUTPUT="))
+                pathlib.Path(binary).write_bytes(b"fixture binary")
+                return ""
+
+            with mock.patch.object(build_doom, "APP", app), \
+                    mock.patch.object(build_doom, "ensure_git_ignore"), \
+                    mock.patch.object(build_doom, "obtain_source", return_value=source), \
+                    mock.patch.object(build_doom, "check_binary"), \
+                    mock.patch.object(build_doom, "run", side_effect=fake_make) as run, \
+                    mock.patch.object(sys, "argv", ["build-doom", "--prepare-only", "--without-wads",
+                        "--buildroot-output", str(buildroot), "--package-output", str(output),
+                        "--key", str(base / "nonexistent-key")]):
+                self.assertEqual(build_doom.main(), 0)
+                run.assert_called_once()
+            self.assertEqual({p.relative_to(output).as_posix() for p in output.rglob("*") if p.is_file()}, {
+                "manifest.toml.in", "service", "upstream.json", "licenses/UPSTREAM", "licenses/LICENSE.doomgeneric",
+                "payload/bin/doom", "source/doomgeneric/Makefile.linuxvt", "source/doomgeneric/doomgeneric.c",
+                "source/doomgeneric/doomgeneric_fre3nder.c",
+            })
 
 
 

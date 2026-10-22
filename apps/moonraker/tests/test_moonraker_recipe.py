@@ -10,16 +10,18 @@ import importlib.machinery
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import subprocess
+import sys
 import tempfile
 import tomllib
 import unittest
 from unittest import mock
 import zipfile
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 RECIPE = ROOT / "apps/moonraker"
-PREPARE = ROOT / "scripts/prepare-moonraker"
+PREPARE = ROOT / "apps/moonraker/scripts/prepare-moonraker"
 
 
 def module_from(path):
@@ -117,6 +119,10 @@ class MoonrakerRecipeTests(unittest.TestCase):
             }
             (local_recipe / "upstream.json").write_text(json.dumps(upstream))
             (local_recipe / "python-wheels.json").write_text(json.dumps(lock))
+            for name in ("manifest.toml.in", "service", "licenses/UPSTREAM"):
+                target = local_recipe / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(RECIPE / name, target)
             output = base / "payload"
             with mock.patch.object(self.mod, "RECIPE", local_recipe):
                 self.mod.prepare(source, cache, output)
@@ -127,6 +133,15 @@ class MoonrakerRecipeTests(unittest.TestCase):
                 self.assertFalse((output / "source/.git").exists())
                 self.assertEqual(json.loads((output / "provenance.json").read_text())
                                  ["source"]["commit"], commit)
+                package = base / "package"
+                with mock.patch.object(sys, "argv", [str(PREPARE), "--source", str(source),
+                        "--wheels", str(cache), "--output", str(package)]):
+                    self.mod.main()
+                self.assertEqual({p.relative_to(package).as_posix() for p in package.rglob("*") if p.is_file()}, {
+                    "manifest.toml.in", "service", "licenses/UPSTREAM", "upstream.json", "python-wheels.json",
+                    "payload/source/moonraker/moonraker.py", "payload/python/testdep/__init__.py",
+                    "payload/provenance.json",
+                })
                 self.mod.prepare(source, cache, output)
                 self.assertEqual((output / "source/moonraker/moonraker.py").read_text(),
                                  app_file.read_text())

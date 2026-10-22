@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P) || exit 1
+root=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd -P) || exit 1
 caller_dir=$(pwd -P)
 artifact=
 key=
@@ -33,13 +33,13 @@ case "$artifact" in /*) ;; *) artifact=$caller_dir/$artifact ;; esac
 case "$key" in /*) ;; *) key=$caller_dir/$key ;; esac
 
 recipe=$root/apps/fre3nderscreen
-payload=$root/apps/fre3nderscreen/payload
-for directory in "$root/scripts" "$root/apps" "$recipe"; do
+package_source=$root/local/fre3nderscreen/package
+for directory in "$root/scripts" "$root/apps" "$recipe" "$recipe/scripts"; do
     [ -d "$directory" ] && [ ! -L "$directory" ] || fail "unsafe repository directory: $directory"
 done
 [ -f "$recipe/manifest.toml.in" ] && [ ! -L "$recipe/manifest.toml.in" ] \
     || fail "missing regular Fre3nderScreen recipe manifest"
-[ -x "$root/scripts/prepare-fre3nderscreen" ] && [ -x "$root/scripts/build-fre3app" ] \
+[ -x "$root/apps/fre3nderscreen/scripts/prepare-fre3nderscreen" ] && [ -x "$root/scripts/build-fre3app" ] \
     || fail "missing importer or package builder"
 apps_worktree=clean
 if ! git -C "$root" diff --quiet -- || ! git -C "$root" diff --cached --quiet --; then
@@ -47,16 +47,14 @@ if ! git -C "$root" diff --quiet -- || ! git -C "$root" diff --cached --quiet --
 fi
 apps_commit=$(git -C "$root" rev-parse --short=7 HEAD)
 [ -n "$apps_commit" ] || fail "missing fre3nder-apps commit identity"
-[ ! -L "$payload" ] || fail "payload must not be a symlink"
-if [ -e "$payload" ]; then
-    [ -d "$payload" ] || fail "payload exists but is not a directory"
-    rm -rf -- "$root/apps/fre3nderscreen/payload"
-fi
+[ ! -L "$package_source" ] || fail "package source must not be a symlink"
+[ ! -e "$package_source" ] || [ -d "$package_source" ] \
+    || fail "package source exists but is not a directory"
 
 cd "$root"
-"$root/scripts/prepare-fre3nderscreen" --develop --artifact "$artifact"
+"$root/apps/fre3nderscreen/scripts/prepare-fre3nderscreen" --develop --artifact "$artifact" --output "$package_source"
 # The importer has validated this provenance; use its development release unchanged.
-source_release=$(python3 - "$payload/artifact-manifest.json" <<'PYTHON'
+source_release=$(python3 - "$package_source/payload/artifact-manifest.json" <<'PYTHON'
 import json
 import sys
 from pathlib import Path
@@ -65,7 +63,7 @@ print(json.loads(Path(sys.argv[1]).read_text())["source"]["release"])
 PYTHON
 )
 version="$source_release-fre3nder.0.$apps_commit"
-package=$("$root/scripts/build-fre3app" "$recipe" --key "$key" --develop --version "$version")
+package=$("$root/scripts/build-fre3app" "$package_source" --key "$key" --develop --version "$version")
 [ -n "$package" ] || fail "package builder returned no path"
 case "$package" in
     *'
