@@ -28,6 +28,7 @@ def load_module(name, path):
 
 
 client = load_module("app_update_client", RECIPE / "payload/client.py")
+fetch_transport = client.fetch
 worker = load_module("app_update_worker_contract", ROOT / "docker-repository/repositoryd.py")
 
 # RFC 8032, section 7.1, TEST 2. Public material only, no signing seed.
@@ -334,6 +335,89 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(self.status()["packages"], index()["packages"])
         self.assertNotIn("extension", self.status()["repository"])
         self.assertEqual(json.loads((self.data / "verified.json").read_text())["index"].encode(), self.raw)
+
+    def package_download_fixture(self, package=b"package-bytes" * 7000):
+        value = index()
+        offer = value["packages"][0]
+        offer.update(size=len(package), sha256=hashlib.sha256(package).hexdigest())
+        offer["path"] = f"packages/example/example-{offer['version']}-{offer['sha256'][:12]}.fre3app"
+        raw = worker.json_bytes(value)
+        (self.data / "verified.json").write_bytes(client.json_bytes({
+            "schema": 1, "key_fingerprint": FINGERPRINT, "index": raw.decode(),
+            "signature": fake_signature(raw).hex(), "checked_at": "2026-10-20T10:00:00+00:00"}))
+        response = io.BytesIO(package)
+        response.status, response.headers = 200, {}
+        opener = mock.Mock()
+        opener.open.return_value = response
+        self.patch(client.urllib.request, "build_opener", return_value=opener)
+        self.fetch.side_effect = fetch_transport
+        return value, opener
+
+    def test_explicit_download_reverifies_index_streams_bytes_and_creates_no_package_copy(self):
+        package = b"package-bytes" * 7000
+        value, opener = self.package_download_fixture(package)
+        before = {path.name: path.read_bytes() for path in self.data.iterdir()}
+        output, metadata = io.BytesIO(), io.BytesIO()
+        client.download(self.data, "example", 1, output, metadata)
+        self.assertEqual(output.getvalue(), package)
+        self.assertEqual(json.loads(metadata.getvalue()), value["packages"][0])
+        self.verify.assert_called_once()
+        request = opener.open.call_args.args[0]
+        self.assertEqual(request.full_url, "https://repository.example.invalid/" + value["packages"][0]["path"])
+        self.assertEqual({path.name: path.read_bytes() for path in self.data.iterdir()}, before)
+
+    def test_download_rejects_absent_ambiguous_or_tampered_signed_offer(self):
+        for failure in ("signature", "path", "ambiguous", "absent", "unconfigured"):
+            with self.subTest(failure=failure):
+                value, opener = self.package_download_fixture()
+                cached = json.loads((self.data / "verified.json").read_text())
+                if failure == "signature":
+                    cached["signature"] = "0" * 128
+                if failure == "path":
+                    value["packages"][0]["path"] = "../other.fre3app"
+                if failure == "ambiguous":
+                    value["packages"].append({**value["packages"][0], "publisher": {"id": "other", "key_fingerprint": "e" * 64}})
+                if failure in ("path", "ambiguous"):
+                    cached["index"] = worker.json_bytes(value).decode()
+                    cached["signature"] = fake_signature(cached["index"].encode()).hex()
+                (self.data / "verified.json").write_bytes(client.json_bytes(cached))
+                if failure == "unconfigured":
+                    (self.data / "repository.json").unlink()
+                output = io.BytesIO()
+                with self.assertRaises(client.ClientError):
+                    client.download(self.data, "missing" if failure == "absent" else "example", 1, output)
+                self.assertEqual(output.getvalue(), b"")
+                opener.open.assert_not_called()
+
+    def test_download_transport_checks_size_digest_and_interruption(self):
+        for failure in ("size", "digest", "interrupted", "redirect", "encoding"):
+            with self.subTest(failure=failure):
+                _, opener = self.package_download_fixture(b"abc")
+                response = io.BytesIO(b"abd" if failure == "digest" else b"ab" if failure == "size" else b"abc")
+                response.status = 302 if failure == "redirect" else 200
+                response.headers = {"Content-Encoding": "gzip"} if failure == "encoding" else {}
+                if failure == "interrupted":
+                    response.read1 = mock.Mock(side_effect=OSError("connection interrupted"))
+                opener.open.return_value = response
+                with self.assertRaises((client.ClientError, OSError)):
+                    client.download(self.data, "example", 1, io.BytesIO())
+
+    def test_download_cli_uses_stdout_only_for_bytes_and_stderr_for_failures(self):
+        self.package_download_fixture(b"abc")
+        output, errors = io.BytesIO(), io.StringIO()
+        with mock.patch.object(sys, "argv", ["client", "--data", str(self.data), "--download", "example", "--release-serial", "1"]), \
+                mock.patch.object(sys, "stdout", buffer=output), mock.patch.object(sys, "stderr", errors), \
+                mock.patch.object(client.signal, "signal"), mock.patch.object(client.os, "umask"):
+            self.assertEqual(client.main(), 0)
+        self.assertEqual(output.getvalue(), b"abc")
+        self.assertEqual(errors.getvalue(), "")
+        self.package_download_fixture(b"abc")
+        with mock.patch.object(sys, "argv", ["client", "--data", str(self.data), "--download", "../bad", "--release-serial", "1"]), \
+                mock.patch.object(sys, "stdout", buffer=io.BytesIO()) as stdout, mock.patch.object(sys, "stderr", errors), \
+                mock.patch.object(client.signal, "signal"), mock.patch.object(client.os, "umask"):
+            self.assertEqual(client.main(), 1)
+            self.assertEqual(stdout.buffer.getvalue(), b"")
+        self.assertIn("app name", errors.getvalue())
 
     def test_background_loop_keeps_errors_in_process_and_uses_bounded_retry(self):
         for outcome, interval in (("ok", 1800), ("error", 60), ("disabled", 60)):

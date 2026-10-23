@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Optional, unprivileged discovery of signed schema-1 repository offers.
+"""Unprivileged repository discovery and explicitly requested package streams.
 
 These files are advisory app data, never authorization for an installation.
 Copyright (C) 2026 Fre3nder contributors; AGPL-3.0-or-later.
@@ -25,6 +25,8 @@ import urllib.parse
 import urllib.request
 
 MAX_INDEX = 1024 * 1024
+MAX_PACKAGE = 256 * 1024 * 1024
+DOWNLOAD_TIMEOUT = 15 * 60
 TIMEOUT = 10
 INTERVAL = 30 * 60
 RETRY_INTERVAL = 60
@@ -147,34 +149,47 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def fetch(url, limit):
+def fetch(url, limit, output=None, expected_size=None, expected_sha256=None):
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     request = urllib.request.Request(url, headers={"Accept-Encoding": "identity",
         "Cache-Control": "no-cache", "User-Agent": "fre3nder-app-update/0.1"})
-    deadline = time.monotonic() + 3 * TIMEOUT
+    deadline = time.monotonic() + (DOWNLOAD_TIMEOUT if output is not None else 3 * TIMEOUT)
     with opener.open(request, timeout=TIMEOUT) as response:
         if response.status != 200 or response.headers.get("Content-Encoding", "identity") != "identity":
-            fail("unexpected index HTTP response")
+            fail("unexpected repository HTTP response")
         length = response.headers.get("Content-Length")
         expected = int(length) if length is not None else None
         if expected is not None and not 0 <= expected <= limit:
-            fail("oversized index response")
+            fail("oversized repository response")
+        if expected_size is not None and expected is not None and expected != expected_size:
+            fail("package Content-Length differs from signed size")
         chunks, size = [], 0
+        digest = hashlib.sha256()
         while True:
             if STOP.is_set():
-                fail("check interrupted")
+                fail("repository transfer interrupted")
             if time.monotonic() > deadline:
-                fail("index response deadline exceeded")
+                fail("repository response deadline exceeded")
             chunk = response.read1(min(65536, limit + 1 - size))
             if not chunk:
                 break
             size += len(chunk)
             if size > limit:
-                fail("oversized index response")
-            chunks.append(chunk)
+                fail("oversized repository response")
+            if expected_size is not None and size > expected_size:
+                fail("package exceeds signed size")
+            if output is None:
+                chunks.append(chunk)
+            else:
+                digest.update(chunk)
+                output.write(chunk)
         if expected is not None and size != expected:
-            fail("incomplete index response")
-        return b"".join(chunks)
+            fail("incomplete repository response")
+        if expected_size is not None and size != expected_size:
+            fail("package size differs from signed size")
+        if expected_sha256 is not None and digest.hexdigest() != expected_sha256:
+            fail("package SHA-256 differs from signed digest")
+        return b"".join(chunks) if output is None else None
 
 
 def validate_index(raw, fingerprint):
@@ -208,7 +223,7 @@ def validate_index(raw, fingerprint):
                 or item.get("target") != {"platform": "fre3nder-x2000", "arch": "mipsel"}
                 or item.get("channel") not in ("stable", "testing")
                 or serial == 0 and item["channel"] != "testing"
-                or type(size) is not int or not 0 < size <= 256 * 1024 * 1024
+                or type(size) is not int or not 0 < size <= MAX_PACKAGE
                 or not isinstance(digest, str) or not HASH.fullmatch(digest)):
             fail("invalid package metadata")
         expected_path = f"packages/{name}/{name}-{version}-{digest[:12]}.fre3app"
@@ -299,15 +314,60 @@ def check(data):
     return outcome
 
 
+def download(data, name, serial, output, metadata=None):
+    if not NAME.fullmatch(name) or type(serial) is not int or serial <= 0:
+        fail("download requires an app name and positive release serial")
+    config = load_config(data)
+    if config is None:
+        fail("repository is not configured")
+    der, fingerprint = public_key(config["public_key"])
+    cached = cached_index(data, fingerprint, der)
+    if cached is None:
+        fail("no verified repository index is available")
+    index = validate_index(cached["index"].encode("utf-8"), fingerprint)
+    offers = [item for item in index["packages"] if item["name"] == name and item["release_serial"] == serial]
+    if len(offers) != 1:
+        fail("requested package is absent or ambiguous in the verified index")
+    offer = {key: offers[0][key] for key in ("name", "version", "release_serial", "publisher",
+                                           "channel", "target", "size", "sha256", "path")}
+    offer["publisher"] = {key: offer["publisher"][key] for key in ("id", "key_fingerprint")}
+    if metadata is not None:
+        metadata.write(json_bytes(offer))
+        metadata.flush()
+    fetch(config["base_url"] + offer["path"], MAX_PACKAGE, output,
+          expected_size=offer["size"], expected_sha256=offer["sha256"])
+    output.flush()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", type=Path, required=True)
-    parser.add_argument("--once", action="store_true", help="check once, without package downloads")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--once", action="store_true", help="check once, without package downloads")
+    mode.add_argument("--download", metavar="APP", help="stream one explicitly requested package to stdout")
+    parser.add_argument("--release-serial", type=int)
+    parser.add_argument("--metadata-fd", type=int, help="optional pipe for the selected signed offer")
     args = parser.parse_args()
     os.umask(0o077)
-    args.data.mkdir(parents=True, exist_ok=True)
     signal.signal(signal.SIGTERM, lambda *_: STOP.set())
     signal.signal(signal.SIGINT, lambda *_: STOP.set())
+    if args.download is not None:
+        if args.release_serial is None or args.metadata_fd is not None and args.metadata_fd < 3:
+            parser.error("download requires --release-serial and a metadata descriptor >= 3")
+        try:
+            if args.metadata_fd is None:
+                download(args.data, args.download, args.release_serial, sys.stdout.buffer)
+            else:
+                with os.fdopen(args.metadata_fd, "wb") as metadata:
+                    download(args.data, args.download, args.release_serial, sys.stdout.buffer, metadata)
+            return 0
+        except (ClientError, OSError, ValueError, KeyError, TypeError, RecursionError,
+                http.client.HTTPException, subprocess.SubprocessError) as exc:
+            print(f"fre3nder-app-update: {str(exc)[:256]}", file=sys.stderr, flush=True)
+            return 1
+    if args.release_serial is not None or args.metadata_fd is not None:
+        parser.error("download arguments require --download")
+    args.data.mkdir(parents=True, exist_ok=True)
     with (args.data / "client.lock").open("a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

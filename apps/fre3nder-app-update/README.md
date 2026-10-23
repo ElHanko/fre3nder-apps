@@ -3,7 +3,8 @@
 `fre3nder-app-update` is an optional, unprivileged `.fre3app`. It retrieves and
 verifies `index.json` and `index.json.sig` from one explicitly configured source.
 It exposes authenticated **offers**, without comparing installed versions,
-downloading packages, installing anything, or contacting Management API.
+installing anything, or contacting Management API. An explicit one-shot mode
+streams a requested package to Management; the background loop downloads indexes only.
 An offer is not a determination that an installed app needs an update.
 
 ## Preparation
@@ -89,7 +90,7 @@ release serials, channel, current X2000/MIPS target, size and SHA-256 are checke
 Package paths must match the existing worker's relative
 `packages/<app>/<app>-<version>-<sha256-prefix>.fre3app` layout; arbitrary URLs,
 traversal and encoded path tricks are rejected. Duplicate release identities
-are rejected. **Only the two index files are fetched.**
+are rejected. **The background check fetches only the two index files.**
 
 The revision in `verified.json` is the high-water mark: lower revisions fail,
 and the same revision requires byte-identical index content. An identical,
@@ -109,6 +110,44 @@ signature, publisher and release-serial validation. No management group or socke
 rights are granted by this app.
 
 ## Lifecycle and host checks
+
+Management can explicitly invoke the installed client as the unprivileged
+`fre3nder` user:
+
+```sh
+python3 <app-runtime>/payload/client.py --data <app-data-directory> \
+  --download <app-name> --release-serial <positive-serial>
+```
+
+This reads the configured public key and re-verifies the exact signed index in
+`verified.json`. Exactly one offer must match the name and serial; ambiguous
+publishers, missing offers, modified index/signature and invalid metadata fail.
+There is no arbitrary URL/path argument and no automatic index refresh or retry.
+The existing daemon need not stop: download only reads atomically published
+state and never changes its lock, PID, index, replay history or status.
+
+Stdout contains only package bytes; errors use stderr and a nonzero exit code.
+The internal optional `--metadata-fd <fd>` writes one UTF-8 JSON line containing
+the selected validated offer before streaming bytes. Management supplies this
+separate pipe and bounds its read to 4 KiB. It carries no trust grant.
+The URL is solely the configured base plus the signed, validated relative path.
+Redirects, environment proxies and content encoding are rejected; HTTPS retains
+normal certificate validation. The socket timeout stays 10 seconds; the package
+body has a 15-minute deadline (index checks retain their 30-second deadline).
+Reads are bounded to 64 KiB, the maximum is 256 MiB, and signed size/SHA-256 are
+checked while streaming. A late error can follow already streamed bytes; the
+caller must require successful process exit before accepting the stream.
+
+The client creates no package file in app data, `/tmp`, `/run` or RAM. Management
+writes directly to `.download-*.part` under `/home/.tmp/fre3nder/uploads/`, checks
+size/SHA-256 independently and asks Package-Core to verify the package and
+requested name/version/serial/publisher identity. Only then is the same inode
+published as a normal verified `<package_id>.fre3app`. No second full package
+copy is made. Interrupted or rejected downloads are removed.
+
+**Download and package verification are not installation confirmation.** The
+existing, separately confirmed Management update/install operation remains
+necessary, with Package-Core's independent trust and release rules.
 
 `install`, `update` and `restore` check the payload and create the data directory
 without fetching anything. `start` starts one background process and returns
@@ -134,5 +173,6 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s apps/fre3nder-app-upda
 Index-flow tests simulate signature responses. OpenSSL verification is tested
 separately using a fixed public Ed25519 test vector, including altered bytes and
 the wrong public key. No test private keys are stored or used. No package is
-signed, built or installed by these tests. Screen UI, installed-version comparison
-and explicit package downloads/installation remain follow-up work.
+signed, built or installed by these tests. Installed-version comparison belongs
+to Management. UI download controls remain follow-up work; installation stays a
+separate Package-Core operation.
