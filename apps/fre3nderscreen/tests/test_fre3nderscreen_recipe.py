@@ -51,20 +51,6 @@ class RecipeTests(unittest.TestCase):
         self.assertEqual(modes["service"], 0o755)
         self.assertEqual(modes["payload/bin/fre3nderscreen"], 0o755)
         self.assertEqual(modes["payload/themes/blue.json"], 0o644)
-        payload = ROOT / "local/fre3nderscreen/package/payload"
-        if payload.exists():
-            expected = {
-                "bin/fre3nderscreen",
-                "artifact-manifest.json",
-                "defaults/fre3nderscreen.json",
-                *(f"themes/{name}.json" for name in ("blue", "green", "pink", "purple", "red", "yellow")),
-                *(f"licenses/{name}" for name in (
-                    "COPYING", "DEJAVU-FONTS-LICENSE", "LIBHV-LICENSE", "LV-DRIVERS-LICENSE",
-                    "LVGL-LICENSE", "MATERIAL-DESIGN-ICONS-LICENSE", "SPDLOG-LICENSE",
-                )),
-            }
-            actual = {path.relative_to(payload).as_posix() for path in payload.rglob("*") if path.is_file()}
-            self.assertEqual(actual, expected)
         self.assertEqual(
             subprocess.run(
                 ["git", "check-ignore", "-q", "local/fre3nderscreen/package/payload/bin/fre3nderscreen"],
@@ -88,7 +74,7 @@ class RecipeTests(unittest.TestCase):
             license_bytes = {
                 name: name.encode() + b"\r\nfixture text with trailing spaces  \r\n"
                 for name in (
-                    "COPYING", "DEJAVU-FONTS-LICENSE", "LIBHV-LICENSE", "LV-DRIVERS-LICENSE",
+                    "COPYING", "DEJAVU-FONTS-LICENSE", "LIBHV-LICENSE",
                     "LVGL-LICENSE", "MATERIAL-DESIGN-ICONS-LICENSE", "SPDLOG-LICENSE",
                 )
             }
@@ -111,7 +97,7 @@ class RecipeTests(unittest.TestCase):
                 "submodules": {
                     name: {"commit": "b" * 40, "license": license}
                     for name, license in (
-                        ("libhv", "BSD-3-Clause"), ("lv_drivers", "MIT"),
+                        ("libhv", "BSD-3-Clause"),
                         ("lvgl", "MIT"), ("spdlog", "MIT"),
                     )
                 },
@@ -137,6 +123,19 @@ class RecipeTests(unittest.TestCase):
             write_metadata()
             payload = root / "payload"
             self.assertEqual(import_artifact(payload).returncode, 0)
+            expected = {
+                "bin/fre3nderscreen",
+                "artifact-manifest.json",
+                "defaults/fre3nderscreen.json",
+                *(f"themes/{name}.json" for name in ("blue", "green", "pink", "purple", "red", "yellow")),
+                *(f"licenses/{name}" for name in (
+                    "COPYING", "DEJAVU-FONTS-LICENSE", "LIBHV-LICENSE",
+                    "LVGL-LICENSE", "MATERIAL-DESIGN-ICONS-LICENSE", "SPDLOG-LICENSE",
+                )),
+            }
+            actual = {path.relative_to(payload / "payload").as_posix()
+                      for path in (payload / "payload").rglob("*") if path.is_file()}
+            self.assertEqual(actual, expected)
             self.assertEqual((payload / "payload/bin/fre3nderscreen").read_bytes(), b"fixture binary")
             self.assertEqual(json.loads((payload / "payload/artifact-manifest.json").read_text())["artifact_mode"], "release")
             for name, data in license_bytes.items():

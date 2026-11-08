@@ -23,10 +23,10 @@ SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 THEMES = {f"themes/{name}.json" for name in ("blue", "green", "pink", "purple", "red", "yellow")}
 LICENSES = {
-    "COPYING", "DEJAVU-FONTS-LICENSE", "LIBHV-LICENSE", "LV-DRIVERS-LICENSE",
+    "COPYING", "DEJAVU-FONTS-LICENSE", "LIBHV-LICENSE",
     "LVGL-LICENSE", "MATERIAL-DESIGN-ICONS-LICENSE", "SPDLOG-LICENSE",
 }
-SUBMODULE_LICENSES = {"libhv": "BSD-3-Clause", "lv_drivers": "MIT", "lvgl": "MIT", "spdlog": "MIT"}
+SUBMODULE_LICENSES = {"libhv": "BSD-3-Clause", "lvgl": "MIT", "spdlog": "MIT"}
 FILES = {"bin/fre3nderscreen", *THEMES, *(f"licenses/{name}" for name in LICENSES)}
 ABI = {"arch": "mipsel", "isa": "mips32r2", "float_abi": "hard", "nan": "nan2008", "linkage": "static"}
 

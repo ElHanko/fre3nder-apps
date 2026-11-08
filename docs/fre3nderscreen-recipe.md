@@ -7,15 +7,15 @@ imports the neutral app artifact and packages/signs the `.fre3app`.
 ## Source and artifact contract
 
 `fre3nder/configs/x2000/sources.json` is the sole production source pin.
-For release `2026.2` it selects the committed cleanup source
-`823d090bc97f9e6b429aebda93f588450b33f40b`; the four submodule pins are unchanged.
-`fre3nder/scripts/build-x2000-fre3nderscreen` fetches that exact commit in release
-mode, verifies the submodule pins, applies the three Screen-owned dependency
-patches, and checks the statically linked MIPS32r2 hardfloat ELF/ABI.
+The pinned source uses LVGL 9.6.0, libhv 1.3.4 and spdlog 1.17.0,
+with no separate lv_drivers submodule.
+`fre3nder/scripts/build-x2000-fre3nderscreen` fetches the pinned commit in release
+mode, verifies the three submodule pins, applies the single opt-in evdev
+raw-mode patch, and checks the statically linked MIPS32r2 hardfloat ELF/ABI.
 It produces `local/production/artifacts/x2000/fre3nderscreen/app/`, with:
 
 - `bin/fre3nderscreen` and six themes (blue, green, pink, purple, red, yellow);
-- seven license texts: `COPYING`, `LVGL-LICENSE`, `LV-DRIVERS-LICENSE`,
+- six license files: `COPYING`, `LVGL-LICENSE`,
   `LIBHV-LICENSE`, `SPDLOG-LICENSE`, `DEJAVU-FONTS-LICENSE`,
   `MATERIAL-DESIGN-ICONS-LICENSE`;
 - `artifact-manifest.json` with source/submodule/build provenance and file hashes;
@@ -160,7 +160,8 @@ copy a regular non-symlink legacy config from
 defaults. Device discovery, permissions and privileged management belong to Core.
 
 Fre3nderScreen retains its Guppy Screen history and GPL-3.0-only provenance.
-LVGL, lv_drivers and spdlog use MIT; libhv uses BSD-3-Clause. DejaVu and Material
+LVGL and spdlog use MIT; libhv uses BSD-3-Clause. `LVGL-LICENSE` also contains
+the Zlib notice of LVGL's bundled LodePNG decoder. DejaVu and Material
 Design Icons notices remain in `payload/licenses/`. Exact imported source,
 submodule commits and artifact checksums travel in the signed
 `payload/artifact-manifest.json`. See `apps/fre3nderscreen/licenses/UPSTREAM`.
