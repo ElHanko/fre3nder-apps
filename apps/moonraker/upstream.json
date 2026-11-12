@@ -2,7 +2,7 @@
   "schema": 1,
   "project": "moonraker",
   "repository": "https://github.com/Arksine/moonraker.git",
-  "commit": "9e676eba6b02661a4dfa3ec6e7ac3f3504498e6d",
+  "commit": "b559b9a81161f958a43c2f527b6ad96f73310d5d",
   "license": "GPL-3.0-only",
   "python": "3.12"
 }

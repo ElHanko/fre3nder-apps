@@ -55,7 +55,8 @@ source. Bundled source and wheels retain their upstream license texts.
 Use `scripts/build-fre3app local/moonraker/package --key <official-app-key>` for a
 release recipe with a positive, increasing `release_serial`. For a development
 snapshot, use `--develop --version <unique-development-version>`; its serial
-is zero. The checked-in template has release serial `1`.
+is zero. The checked-in template has release serial `2`, following the
+`git.9e676eb-fre3nder.1` system package at serial `1`.
 For explicitly selected stable metadata, pass both `--version VERSION` and
 `--release-serial N` to that same builder, choosing an unused release identity.
 The maintained template and pins remain unchanged; no serial is assigned for you.
@@ -81,3 +82,6 @@ Package-Core restarts an already running service after a manual app update and
 restores the previous runtime on failure. Configuration, logs, database and
 G-code remain in `/home/fre3nder/printer_data/`; package updates do not delete
 that state. There is no on-device pip or Git updater for this signed runtime.
+The service requires a virtual environment for any pip command and disables
+package indexes. Since Moonraker runs with the platform's system Python, its
+upstream pip recovery fails instead of installing dependencies on the printer.

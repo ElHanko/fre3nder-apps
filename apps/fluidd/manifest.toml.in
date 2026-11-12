@@ -2,8 +2,8 @@ format = 1
 
 [app]
 name = "fluidd"
-version = "1.37.6-fre3nder.1"
-release_serial = 1
+version = "1.38.0-fre3nder.1"
+release_serial = 3
 
 [publisher]
 id = "fre3nder-official"

@@ -12,7 +12,7 @@ The repository contains:
 
 - a deterministic `.fre3app` builder;
 - a minimal `dummy` package used to qualify the format and lifecycle contract;
-- the pinned Fluidd 1.37.6 web frontend recipe;
+- the pinned Fluidd 1.38.0 web frontend recipe;
 - the pinned OctoApp 3.2.4 local-Moonraker application recipe;
 - the optional `fre3nder-app-update` signed repository-index client;
 - host-side tests for reproducibility and package signatures.
@@ -74,7 +74,7 @@ apps/fluidd/scripts/prepare-fluidd
 scripts/build-fre3app local/fluidd/package --key <signing-key>
 ```
 
-`prepare-fluidd` downloads the exact v1.37.6 asset listed in
+`prepare-fluidd` downloads the exact v1.38.0 asset listed in
 `apps/fluidd/upstream.json`, checks its size and SHA-256, safely extracts it
 into `local/fluidd/package/payload/`, and validates `index.html` and
 `release_info.json`. `--archive <file>` uses a previously downloaded archive
@@ -87,6 +87,16 @@ Fluidd's source commit, archive identity and GPL-3.0-only redistribution
 information are recorded in `apps/fluidd/upstream.json` and
 `apps/fluidd/licenses/UPSTREAM`. The package carries the GPL version 3 text in
 `apps/fluidd/licenses/LICENSE.fluidd`.
+
+The `1.38.0-fre3nder.1` package uses release serial `3`, following the existing
+`1.37.6-fre3nder.2` package at serial `2`. The packaging revision suffix and
+the monotonically increasing release serial are independent.
+
+Fluidd 1.38.0 uses Moonraker's existing extensions API. Its new firmware update
+UI requires an `aldis` agent or registered service, which Fre3nder does not
+bundle or configure. No agent, updater or privileged firmware access is added
+by these recipes. System and firmware updates remain platform-owned; retain
+the platform's disabled Moonraker system updates and signed app lifecycle.
 
 ## Fre3nderScreen
 

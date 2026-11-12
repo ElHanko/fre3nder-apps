@@ -57,13 +57,13 @@ class FluiddSourceTests(unittest.TestCase):
     def test_pinned_manifest_and_service(self):
         manifest = tomllib.loads((SOURCE / "manifest.toml.in").read_text())
         self.assertEqual(manifest["app"], {
-            "name": "fluidd", "version": "1.37.6-fre3nder.1", "release_serial": 1,
+            "name": "fluidd", "version": "1.38.0-fre3nder.1", "release_serial": 3,
         })
         self.assertEqual(manifest["runtime"]["autostart"], False)
         self.assertEqual(manifest["web"]["frontend"], True)
         upstream = json.loads((SOURCE / "upstream.json").read_text())
-        self.assertEqual(upstream["asset_size"], 4359674)
-        self.assertEqual(upstream["asset_sha256"], "9fe5bcd4a443f4cccd20cef222e70cc334a874070b21d116097a28405b0ed456")
+        self.assertEqual(upstream["asset_size"], 4427087)
+        self.assertEqual(upstream["asset_sha256"], "71b29320c59d185a52a06250a17ed494a471ea163d1d9c4a821b9cb4bf57dd97")
         service = (SOURCE / "service").read_text()
         for forbidden in ("urllib", "urlopen", "https://", "moonraker.conf", "frontend/active", "S62"):
             self.assertNotIn(forbidden, service)

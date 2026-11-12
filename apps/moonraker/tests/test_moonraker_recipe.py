@@ -9,6 +9,7 @@ import hashlib
 import importlib.machinery
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -53,7 +54,7 @@ class MoonrakerRecipeTests(unittest.TestCase):
     def test_upstream_and_lock_are_pinned(self):
         upstream = json.loads((RECIPE / "upstream.json").read_text())
         self.assertEqual(upstream["commit"],
-                         "9e676eba6b02661a4dfa3ec6e7ac3f3504498e6d")
+                         "b559b9a81161f958a43c2f527b6ad96f73310d5d")
         self.assertEqual(upstream["repository"],
                          "https://github.com/Arksine/moonraker.git")
         lock = json.loads((RECIPE / "python-wheels.json").read_text())
@@ -81,6 +82,45 @@ class MoonrakerRecipeTests(unittest.TestCase):
         result = subprocess.run(["sh", "-n", str(RECIPE / "service")],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_service_blocks_upstream_pip_recovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            runtime = base / "runtime"
+            entrypoint = runtime / "payload/source/moonraker/moonraker.py"
+            entrypoint.parent.mkdir(parents=True)
+            entrypoint.write_text("# fixture\n")
+            (runtime / "payload/python").mkdir()
+            printer_data = base / "printer_data"
+            (printer_data / "config").mkdir(parents=True)
+            (printer_data / "config/moonraker.conf").write_text("[server]\n")
+            (printer_data / "logs").mkdir()
+            mockbin = base / "bin"
+            mockbin.mkdir()
+            daemon = mockbin / "start-stop-daemon"
+            daemon.write_text(
+                '#!/bin/sh\n'
+                'printf "%s\\n" "$PIP_REQUIRE_VIRTUALENV" "$PIP_NO_INDEX" '
+                '"$PIP_ONLY_BINARY" > "$FIXTURE_PIP_ENV"\n'
+                'exit 1\n'
+            )
+            daemon.chmod(0o755)
+            captured = base / "pip-env"
+            env = dict(os.environ,
+                       PATH=str(mockbin) + os.pathsep + os.environ.get("PATH", ""),
+                       FRE3NDER_APP_RUNTIME_DIR=str(runtime),
+                       FRE3NDER_APP_DATA_DIR=str(base / "data"),
+                       FRE3NDER_PRINTER_DATA_DIR=str(printer_data),
+                       FRE3NDER_PYTHON=sys.executable,
+                       FIXTURE_PIP_ENV=str(captured),
+                       PIP_REQUIRE_VIRTUALENV="0", PIP_NO_INDEX="0",
+                       PIP_ONLY_BINARY="")
+            result = subprocess.run(["sh", str(RECIPE / "service"), "start"],
+                                    env=env, capture_output=True, text=True)
+            # The stub captures the actual daemon environment, then fails
+            # before any process is launched or readiness wait is entered.
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertEqual(captured.read_text(), "1\n1\n:all:\n")
 
     def test_source_pin_and_offline_staging(self):
         with tempfile.TemporaryDirectory() as tmp:

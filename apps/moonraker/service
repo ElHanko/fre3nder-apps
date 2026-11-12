@@ -65,6 +65,9 @@ start_app() {
     export PYTHONPATH="$python_dir:$source"
     export HOME="$home"
     export PIP_ONLY_BINARY=:all:
+    # Upstream import recovery must fail closed in the platform's system Python.
+    export PIP_REQUIRE_VIRTUALENV=1
+    export PIP_NO_INDEX=1
     start-stop-daemon -S -q -b -m -p "$pid_file" -x "$python" -- \
         "$entrypoint" -d "$printer_data" -c "$config" -l "$log" -u "$uds" || return 1
     tries=0
