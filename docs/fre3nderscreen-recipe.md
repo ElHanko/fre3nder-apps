@@ -101,7 +101,9 @@ It uses `prepare-fre3nderscreen --develop` and
 `build-fre3app --develop --version ...`, producing
 `<artifact.source.release>-fre3nder.0.<apps-commit>`, serial `0`.
 `artifact.source.release` is `YEAR.SERIES.<screen-commit>` (seven commit
-characters); for example, `2026.3.<screen-commit>`. The template stays unchanged.
+characters). The Screen checkout supplies the development series, independently
+of the release package template. For example, `2026.4.a` yields
+`2026.4.<screen-commit>`.
 The wrapper allows tracked recipe changes but reports `Recipe worktree: dirty`.
 Commit-based version strings do not identify pending changes; inspect the source
 worktree hash and package checksum as well. This path does not copy a Factory

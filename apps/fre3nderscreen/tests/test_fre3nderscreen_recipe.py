@@ -239,12 +239,13 @@ class RecipeTests(unittest.TestCase):
             for release, expected in (
                 ("2026.1.1", "2026.1.abcdef1"),
                 ("2026.3", "2026.3.abcdef1"),
+                ("2026.3", "2026.4.abcdef1"),
             ):
                 with self.subTest(release=release), mock.patch.dict(validate.__globals__, RECIPE=recipe):
                     (recipe / "manifest.toml.in").write_text(
                         template.replace("2026.3-fre3nder.1", f"{release}-fre3nder.1")
                     )
-                    for version in (expected, "2026.abcdef1", expected + "0"):
+                    for version in (expected, "2026.abcdef1", "2026.4.1234567", expected + "0"):
                         manifest["source"]["release"] = version
                         (artifact / "artifact-manifest.json").write_text(json.dumps(manifest) + "\n")
                         (artifact / "SHA256SUMS").write_text("".join(
