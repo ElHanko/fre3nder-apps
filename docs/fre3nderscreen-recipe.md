@@ -7,7 +7,7 @@ imports the neutral app artifact and packages/signs the `.fre3app`.
 ## Source and artifact contract
 
 `fre3nder/configs/x2000/sources.json` is the sole production source pin.
-The pin selects `3a8ad6a`, using LVGL 9.6.0, libhv 1.3.4 with embedded
+The pin selects `c70c616`, using LVGL 9.6.0, libhv 1.3.4 with embedded
 nlohmann/json 3.12.0, and spdlog 1.17.0 with bundled fmt 12.1.0. LVGL's
 integrated fbdev/evdev/SDL drivers replace the separate `lv_drivers` submodule.
 `fre3nder/scripts/build-x2000-fre3nderscreen` fetches the pinned commit in release
@@ -41,8 +41,8 @@ selection and no fallback to an old file set.
 
 ## Release package
 
-The template remains `2026.2-fre3nder.2`, `release_serial = 2`. Release serials
-must be positive and increase for subsequent releases. Development packages
+The release template is `2026.3-fre3nder.1` with `release_serial = 3`. Release
+serials must be positive and increase for subsequent releases. Development packages
 use serial `0`; Core requires explicit `--allow-downgrade` to replace an installed release
 with one of them. Packaging does not install or downgrade any app.
 
@@ -101,7 +101,7 @@ It uses `prepare-fre3nderscreen --develop` and
 `build-fre3app --develop --version ...`, producing
 `<artifact.source.release>-fre3nder.0.<apps-commit>`, serial `0`.
 `artifact.source.release` is `YEAR.SERIES.<screen-commit>` (seven commit
-characters); for example, `2026.2.<screen-commit>`. The template stays unchanged.
+characters); for example, `2026.3.<screen-commit>`. The template stays unchanged.
 The wrapper allows tracked recipe changes but reports `Recipe worktree: dirty`.
 Commit-based version strings do not identify pending changes; inspect the source
 worktree hash and package checksum as well. This path does not copy a Factory
@@ -115,51 +115,15 @@ the deliberate removal of the duplicate root default config. Versions and
 serials remain unchanged; do not republish changed package bytes with an
 existing release identity.
 
-## Remaining 2026.2 release steps
+## Verify a release package
 
-The upstream migration, matching platform cross-builder and apps importer are
-committed and integrated. The Fre3nder release pin selects `3a8ad6a`, retaining
-source release `2026.2` and package template `2026.2-fre3nder.2`, serial `2`.
-The operator reports successful MIPS/X2000 cross-build, simulator build and
-interactive use, full Fre3nder Development build with Linux 6.6.161/RootFS/OTA,
-and signed package creation/verification. Development app
-`2026.2.3a8ad6a-fre3nder.0.937984e` passed slot-B deployment/boot, update from
-the RootFS-contained `.fre3app`, startup/rendering, touch, standby after
-300 seconds, wake by touch and tty1/tty7 switching with working touch afterward.
-
-These results qualify that Development package and the listed paths.
-Fre3nder's separate FRE3NDER OS identity change `040b313` is implemented and
-tested, but has not yet been validated on the device with a newly built
-RootFS. Production packaging and hardware qualification of that later release
-binary remain separate. Use reviewed, committed release-preparation inputs so
-the combined wrapper's clean tracked apps-worktree check passes.
-
-Moonraker's migration to a signed system app does not add a dependency to this
-standalone Screen pipeline. A later Fre3nder RootFS build separately consumes
-the Screen Factory seed and Moonraker system-app seed; a release image requires
-positive release serials for both.
-
-The existing local Screen tag `2026.2` points to `823d090`, before the dependency
-migration. Check remote tag state before publication. The tag must remain
-untouched until a separate decision authorizes correcting it;
-choosing a new version instead requires consistent source/package version changes.
-Build the pinned app, sign/package it, and verify it offline with Fre3nder
-Package-Core and its immutable official public key. Check version, serial,
-display API, the signed source/submodule/ABI manifest and byte equality/SHA256
-of the Factory seed. Then separately authorize on-device installation and
-regression testing of that production package. Publication requires separate
-tag/push/release approval.
-
-The operator reports X2000 hardware tests with Fre3nder 2026.5 and Screen
-`65b37b9`: unprivileged `fre3nder` startup with primary GID
-`fre3nder-management`, protected root-owned runtime, native System and Apps
-(including writes), and complete OTA through backup, readback, activation and
-restart. The subsequent cleanup passed Docker/SDL build and manual UI testing
-according to the operator, who also reports a successful local X2000
-Development cross-build of the cleaned source. Those earlier results apply to
-their recorded scope; the current migration results are listed above. Neither
-qualifies every UI function or a later production release binary. Earlier
-Factory-app tests remain historical evidence.
+Verify the signed package with Fre3nder Package-Core and the official public
+key. Check the version, release serial, display API and the source commit,
+submodules and ABI in the signed `payload/artifact-manifest.json`. Verify
+that the Factory seed matches the package byte for byte. Keep the published
+source tag and package checksum together. See the platform's
+[display qualification](https://github.com/ElHanko/fre3nder/blob/main/docs/display.md#configuration-and-qualification-boundary)
+for the tested reference configurations.
 
 ## Runtime and provenance
 

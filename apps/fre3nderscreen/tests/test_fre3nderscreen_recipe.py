@@ -31,8 +31,8 @@ class RecipeTests(unittest.TestCase):
         )
         self.assertEqual(manifest["display"], {"frontend": True, "api": 1})
         self.assertEqual(manifest["runtime"], {"service": "service", "autostart": False})
-        self.assertEqual(manifest["app"]["version"], "2026.2-fre3nder.2")
-        self.assertEqual(manifest["app"]["release_serial"], 2)
+        self.assertEqual(manifest["app"]["version"], "2026.3-fre3nder.1")
+        self.assertEqual(manifest["app"]["release_serial"], 3)
 
     def test_payload_layout_and_modes(self):
         builder = runpy.run_path(str(ROOT / "scripts/build-fre3app"))
@@ -90,7 +90,7 @@ class RecipeTests(unittest.TestCase):
                 "artifact_mode": "release",
                 "source": {
                     "repository": "https://example.org/fre3nderscreen.git",
-                    "release": "2026.2",
+                    "release": "2026.3",
                     "commit": "a" * 40,
                     "license": "GPL-3.0-only",
                 },
@@ -165,7 +165,7 @@ class RecipeTests(unittest.TestCase):
             self.assertFalse(rejected.exists())
             manifest["artifact_mode"] = "development"
             manifest["source"]["commit"] = "14cd41599f1ee8dec659b282e54762fd61552c5a"
-            manifest["source"]["release"] = "2026.2.14cd415"
+            manifest["source"]["release"] = "2026.3.14cd415"
             write_metadata()
             self.assertNotEqual(import_artifact(rejected).returncode, 0)
             self.assertFalse(rejected.exists())
@@ -238,11 +238,11 @@ class RecipeTests(unittest.TestCase):
             template = (RECIPE / "manifest.toml.in").read_text()
             for release, expected in (
                 ("2026.1.1", "2026.1.abcdef1"),
-                ("2026.2", "2026.2.abcdef1"),
+                ("2026.3", "2026.3.abcdef1"),
             ):
                 with self.subTest(release=release), mock.patch.dict(validate.__globals__, RECIPE=recipe):
                     (recipe / "manifest.toml.in").write_text(
-                        template.replace("2026.2-fre3nder.2", f"{release}-fre3nder.2")
+                        template.replace("2026.3-fre3nder.1", f"{release}-fre3nder.1")
                     )
                     for version in (expected, "2026.abcdef1", expected + "0"):
                         manifest["source"]["release"] = version

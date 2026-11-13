@@ -14,7 +14,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 WRAPPER = ROOT / "apps/fre3nderscreen/scripts/build-fre3nderscreen-development"
-SOURCE_RELEASE = "2026.2.14cd415"
+SOURCE_RELEASE = "2026.3.14cd415"
 APPS_COMMIT = "4796448"
 FAKE_COMMAND = f"#!{sys.executable}\n" + '''
 import json
