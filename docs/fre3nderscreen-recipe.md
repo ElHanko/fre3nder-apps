@@ -7,8 +7,10 @@ imports the neutral app artifact and packages/signs the `.fre3app`.
 ## Source and artifact contract
 
 `fre3nder/configs/x2000/sources.json` is the sole production source pin.
-The pin selects `c70c616`, using LVGL 9.6.0, libhv 1.3.4 with embedded
-nlohmann/json 3.12.0, and spdlog 1.17.0 with bundled fmt 12.1.0. LVGL's
+The pin selects Screen `2026.4.a` at
+`e5bce78a75c200d22ac633c499023cfcfc74eb7a`, using LVGL 9.6.0,
+libhv 1.3.4 with embedded nlohmann/json 3.12.0, and spdlog 1.17.0 with
+bundled fmt 12.1.0. LVGL's
 integrated fbdev/evdev/SDL drivers replace the separate `lv_drivers` submodule.
 `fre3nder/scripts/build-x2000-fre3nderscreen` fetches the pinned commit in release
 mode, verifies the three submodule pins, applies the single opt-in evdev
@@ -41,7 +43,7 @@ selection and no fallback to an old file set.
 
 ## Release package
 
-The release template is `2026.3-fre3nder.1` with `release_serial = 3`. Release
+The release template is `2026.4.a-fre3nder.1` with `release_serial = 4`. Release
 serials must be positive and increase for subsequent releases. Development packages
 use serial `0`; Core requires explicit `--allow-downgrade` to replace an installed release
 with one of them. Packaging does not install or downgrade any app.
@@ -53,8 +55,9 @@ apps/fre3nderscreen/scripts/build-fre3nderscreen-release \
   --artifact <fre3nder-app-artifact-dir> --key <private-ed25519-key>
 ```
 
-The wrapper accepts release artifacts only. It replaces the generated
-package source, rejecting symlinked recipe boundaries and a non-directory source,
+The wrapper accepts release artifacts from source version `2026.4.a` only.
+It replaces the generated package source, rejecting symlinked recipe
+boundaries and a non-directory source,
 then calls `prepare-fre3nderscreen` and `build-fre3app`. Errors stop the wrapper;
 success reports the package path and SHA-256. It performs no cross-build,
 Factory-seed copy or deployment. Use an existing key; do not generate one for
@@ -131,8 +134,11 @@ for the tested reference configurations.
 
 Fre3nder ships the signed Factory app in the RootFS and automatically
 installs/selects it on first installation, in persistent SYS by default. A
-firmware deployment does not automatically replace an installed Screen version;
-after SYS reset, signed-cache recovery restores that version from HOME.
+new RootFS seed updates an installed official Screen at boot when its
+`release_serial` is higher, preserving the display selection and app data.
+A removed app stays removed. After SYS reset, signed-cache recovery restores
+the installed version from HOME before seed reconciliation. The same release
+ordering applies to required system apps. Development serial zero has no ordering.
 To explicitly apply the embedded Factory app through Core:
 
 ```sh
@@ -140,10 +146,8 @@ fre3nder app update /usr/share/fre3nder/factory-apps/fre3nderscreen.fre3app
 ```
 
 Follow Fre3nder's [verification and update procedure](https://github.com/ElHanko/fre3nder/blob/main/docs/installation.md#update-the-installed-display-app).
-This differs from required system apps, which automatically reconcile newer
-image seeds at boot by increasing release serial. The display manager
-provides API 1, VT, framebuffer and touch paths; the unprivileged package service
-passes them and optional backlight/beeper paths to Screen. App data, logs and PID
+The display manager provides API 1, VT, framebuffer and touch paths; the
+unprivileged package service passes them and optional backlight/beeper paths to Screen. App data, logs and PID
 remain in `$FRE3NDER_APP_DATA_DIR`. An existing app config wins; first setup can
 copy a regular non-symlink legacy config from
 `/home/fre3nder/.fre3nder/fre3nderscreen/fre3nderscreen.json` or use the packaged

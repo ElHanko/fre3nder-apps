@@ -31,8 +31,8 @@ class RecipeTests(unittest.TestCase):
         )
         self.assertEqual(manifest["display"], {"frontend": True, "api": 1})
         self.assertEqual(manifest["runtime"], {"service": "service", "autostart": False})
-        self.assertEqual(manifest["app"]["version"], "2026.3-fre3nder.1")
-        self.assertEqual(manifest["app"]["release_serial"], 3)
+        self.assertEqual(manifest["app"]["version"], "2026.4.a-fre3nder.1")
+        self.assertEqual(manifest["app"]["release_serial"], 4)
 
     def test_payload_layout_and_modes(self):
         builder = runpy.run_path(str(ROOT / "scripts/build-fre3app"))
@@ -90,7 +90,7 @@ class RecipeTests(unittest.TestCase):
                 "artifact_mode": "release",
                 "source": {
                     "repository": "https://example.org/fre3nderscreen.git",
-                    "release": "2026.3",
+                    "release": "2026.4.a",
                     "commit": "a" * 40,
                     "license": "GPL-3.0-only",
                 },
@@ -240,10 +240,11 @@ class RecipeTests(unittest.TestCase):
                 ("2026.1.1", "2026.1.abcdef1"),
                 ("2026.3", "2026.3.abcdef1"),
                 ("2026.3", "2026.4.abcdef1"),
+                ("2026.4.a", "2026.4.abcdef1"),
             ):
                 with self.subTest(release=release), mock.patch.dict(validate.__globals__, RECIPE=recipe):
                     (recipe / "manifest.toml.in").write_text(
-                        template.replace("2026.3-fre3nder.1", f"{release}-fre3nder.1")
+                        template.replace("2026.4.a-fre3nder.1", f"{release}-fre3nder.1")
                     )
                     for version in (expected, "2026.abcdef1", "2026.4.1234567", expected + "0"):
                         manifest["source"]["release"] = version
